@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 import socket
 import sys
 from http.client import HTTPConnection, HTTPException
 from urllib.parse import urlsplit
 
 REQUEST_TIMEOUT = 3.0
+MIN_TIMEOUT_SECONDS = 0.1
+MAX_TIMEOUT_SECONDS = 30.0
 ALLOWED_SCHEME = "http"
 ALLOWED_HOST = "127.0.0.1"
 
@@ -58,6 +61,24 @@ def load_case(path: str) -> dict:
         raise CaseError("'expected_status' 必须为整数（不能是布尔值）")
     if not 100 <= expected_status <= 599:
         raise CaseError("'expected_status' 必须是 100 至 599 之间的整数")
+    # 可选字段：仅在完全缺省时沿用 REQUEST_TIMEOUT；显式 null 属于无效用例。
+    # bool 是 int 的子类需显式排除，字符串、数组、对象一律拒绝，
+    # 不做类型转换或回退默认值
+    if "timeout_seconds" not in case:
+        timeout_seconds = REQUEST_TIMEOUT
+    else:
+        timeout_seconds = case["timeout_seconds"]
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or not MIN_TIMEOUT_SECONDS <= timeout_seconds <= MAX_TIMEOUT_SECONDS
+        ):
+            raise CaseError(
+                f"'timeout_seconds' 必须是 {MIN_TIMEOUT_SECONDS:g} 至 "
+                f"{MAX_TIMEOUT_SECONDS:g} 之间的有限数字"
+            )
+        timeout_seconds = float(timeout_seconds)
 
     try:
         # 括号不成对等结构无效地址会让 urlsplit 本身（或其 hostname 属性）
@@ -89,6 +110,7 @@ def load_case(path: str) -> dict:
         "field": field,
         "expected_value": expected_value,
         "expected_status": expected_status,
+        "timeout_seconds": timeout_seconds,
         "_parsed": parsed,
     }
 
@@ -139,7 +161,9 @@ def execute(case: dict) -> tuple[dict, int]:
     if parsed.query:
         path = f"{path}?{parsed.query}"
 
-    connection = HTTPConnection(parsed.hostname, port, timeout=REQUEST_TIMEOUT)
+    connection = HTTPConnection(
+        parsed.hostname, port, timeout=case["timeout_seconds"]
+    )
     try:
         try:
             connection.request("GET", path, headers={"Connection": "close"})

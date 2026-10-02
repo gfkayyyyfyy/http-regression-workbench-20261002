@@ -12,7 +12,7 @@
   - `GET /health` → 200 `{"status":"ok"}`
   - 其他路径 → 404 `{}`
   - 端口绑定失败时向 stderr 说明原因并以退出码 2 退出。
-- `python -m api_workbench run case.json`：对单个用例只发送一次 `GET`（不跟随重定向，超时固定 3 秒）。
+- `python -m api_workbench run case.json`：对单个用例只发送一次 `GET`（不跟随重定向；超时固定 3 秒，可用可选字段 `timeout_seconds` 覆盖）。
 
 ### 用例格式
 
@@ -24,12 +24,17 @@ UTF-8 编码的 JSON 对象：
   "url": "http://127.0.0.1:8765/health",
   "expected_status": 200,
   "field": "status",
-  "expected_value": "ok"
+  "expected_value": "ok",
+  "timeout_seconds": 1
 }
 ```
 
 校验规则：`name`、`url`、`field` 为非空字符串；`expected_value` 为字符串；
-`expected_status` 为 100–599 的整数（布尔值排除）；`url` 仅为主机是 `127.0.0.1`
+`expected_status` 为 100–599 的整数（布尔值排除）；`timeout_seconds` 为可选字段，
+必须是 0.1–30（含两端）的有限 JSON 数字（整数、小数均可），表示每次网络阻塞等待
+（连接、等待响应头、读取正文）的上限秒数，缺省时为 3 秒，布尔值、字符串、`null`、
+数组、对象、零、负数、范围外数字及非有限数字（`NaN`/`Infinity`）均按无效用例拒绝，
+不做类型转换或回退默认值；`url` 仅为主机是 `127.0.0.1`
 的 HTTP 地址，端口必须为 0–65535 的整数（未填写端口、端口段为空或显式 `0`
 时沿用默认 80 端口）。文件不可读、JSON 无法解析或字段无效（含字母、负数等无法
 解析的端口及超出范围的端口）时不发送请求：stdout 为空、stderr 说明原因、退出码为 2。
