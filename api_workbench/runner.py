@@ -65,6 +65,15 @@ def load_case(path: str) -> dict:
             f"'url' 仅支持主机为 {ALLOWED_HOST} 的 HTTP 地址，收到 {url!r}"
         )
 
+    try:
+        # 含非数字字符（如字母、负号）或超出 0–65535 时，
+        # urlsplit 的 port 属性会抛出 ValueError，须在连接前拒绝用例
+        parsed.port
+    except ValueError:
+        raise CaseError(
+            f"'url' 端口无效（必须为 0 至 65535 之间的整数），收到 {url!r}"
+        ) from None
+
     return {
         "name": name,
         "url": url,
