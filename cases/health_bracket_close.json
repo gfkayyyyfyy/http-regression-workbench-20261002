@@ -1,0 +1,7 @@
+{
+  "name": "health",
+  "url": "http://127.0.0.1]:8765/health",
+  "expected_status": 200,
+  "field": "status",
+  "expected_value": "ok"
+}
