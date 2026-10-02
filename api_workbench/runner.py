@@ -59,6 +59,27 @@ def load_case(path: str) -> dict:
     if not 100 <= expected_status <= 599:
         raise CaseError("'expected_status' 必须是 100 至 599 之间的整数")
 
+    # 可选的每次网络阻塞等待上限（秒），未提供时沿用默认三秒。
+    # 只接受 0.1 至 30（含两端）的有限 JSON 数字，整数与小数均可；
+    # 布尔、字符串、null、数组、对象一律拒绝，不做类型转换或默认值回退。
+    timeout_seconds = REQUEST_TIMEOUT
+    if "timeout_seconds" in case:
+        raw_timeout = case["timeout_seconds"]
+        # bool 是 int 的子类，需显式排除
+        if isinstance(raw_timeout, bool) or not isinstance(
+            raw_timeout, (int, float)
+        ):
+            raise CaseError(
+                "'timeout_seconds' 必须为 0.1 至 30 之间的有限数字"
+                "（不能是布尔值）"
+            )
+        # NaN 与 ±Infinity 无法通过区间比较，一并在此拒绝
+        if not 0.1 <= raw_timeout <= 30:
+            raise CaseError(
+                "'timeout_seconds' 必须为 0.1 至 30 之间的有限数字"
+            )
+        timeout_seconds = float(raw_timeout)
+
     try:
         # 括号不成对等结构无效地址会让 urlsplit 本身（或其 hostname 属性）
         # 抛出 ValueError，必须在连接前作为用例错误拒绝，不得修补后继续请求
@@ -89,6 +110,7 @@ def load_case(path: str) -> dict:
         "field": field,
         "expected_value": expected_value,
         "expected_status": expected_status,
+        "timeout_seconds": timeout_seconds,
         "_parsed": parsed,
     }
 
@@ -139,7 +161,11 @@ def execute(case: dict) -> tuple[dict, int]:
     if parsed.query:
         path = f"{path}?{parsed.query}"
 
-    connection = HTTPConnection(parsed.hostname, port, timeout=REQUEST_TIMEOUT)
+    connection = HTTPConnection(
+        parsed.hostname,
+        port,
+        timeout=case.get("timeout_seconds", REQUEST_TIMEOUT),
+    )
     try:
         try:
             connection.request("GET", path, headers={"Connection": "close"})
