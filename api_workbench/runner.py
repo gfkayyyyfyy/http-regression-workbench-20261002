@@ -65,6 +65,14 @@ def load_case(path: str) -> dict:
             f"'url' 仅支持主机为 {ALLOWED_HOST} 的 HTTP 地址，收到 {url!r}"
         )
 
+    # 在连接前解析端口：非数字（含字母、负数等）或超出 0-65535 均拒绝
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise CaseError(
+            f"'url' 端口无效：端口必须是 0 至 65535 之间的整数，收到 {url!r}"
+        ) from exc
+
     return {
         "name": name,
         "url": url,
