@@ -17,6 +17,23 @@ INVALID_RESPONSE = "invalid_response"
 REQUEST_FAILED = "request_failed"
 
 
+def _reject_constant(value: str):
+    """拒绝未加引号的 NaN / Infinity / -Infinity（非标准 JSON）。
+
+    该回调只在遇到*字面量*常量时触发；引号内的同名字符串
+    （如 "NaN"）以及包含这些字样的字段名不会经过此处，仍然合法。
+    """
+    raise ValueError(f"响应正文包含非标准 JSON 常量: {value}")
+
+
+def _parse_response_body(body: bytes):
+    """按严格 JSON 解析响应正文，返回对象；任何非标准内容均返回 None。"""
+    try:
+        return json.loads(body, parse_constant=_reject_constant)
+    except ValueError:
+        return None
+
+
 class CaseError(ValueError):
     """用例文件不可读、无法解析或字段校验失败。"""
 
@@ -179,11 +196,10 @@ def execute(case: dict) -> tuple[dict, int]:
 
     status_passed = status == case["expected_status"]
 
-    # 响应必须是合法的 UTF-8 JSON 对象，否则字段检查失败、actual 为 null
-    try:
-        payload = json.loads(body)
-    except ValueError:
-        payload = None
+    # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
+    # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
+    # 未加引号 NaN/Infinity/-Infinity 一律解析失败；引号内字符串与字段名不受影响。
+    payload = _parse_response_body(body)
     if not isinstance(payload, dict):
         report = _report(
             case,

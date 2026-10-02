@@ -6,7 +6,10 @@
 1. 合法 JSON 对象的字段断言（通过、值不符、字段缺失、类型严格、
    null 值、状态码不符但字段通过）；
 2. 响应不是合法 JSON 对象时的分类（无法解析的正文、合法 JSON 数组），
-   且无论状态码是否符合期望均为 invalid_response。
+   且无论状态码是否符合期望均为 invalid_response；
+3. 未加引号的 NaN/Infinity/-Infinity 字面量（其他字段、目标字段、
+   嵌套对象与数组元素）一律 invalid_response，而引号内同名字符串、
+   含这些字样的字段名与较长字符串仍合法通过。
 
 仅使用 Python 标准库 unittest；服务使用系统分配的临时端口，
 不依赖固定 8765、不需要手工启动服务或访问公网。
@@ -454,6 +457,209 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
         self.assertFalse(report["field_check"]["passed"])
         self.assertFalse(report["passed"])
         self.assertEqual(completed.returncode, 1)
+
+
+class NonStandardJsonConstantTests(_ReportFlowTestCase):
+    """未加引号的 NaN / Infinity / -Infinity：无论位于正文何处均 invalid_response。
+
+    Python 的 json 解析器默认接受这些非标准常量，这里要求严格 JSON：
+    目标字段、其他字段、嵌套对象与数组元素中的字面量常量都必须拒绝；
+    而引号内的同名字符串、较长字符串以及含这些字样的字段名仍合法。
+    """
+
+    def _assert_invalid_response(
+        self,
+        report: dict,
+        completed: subprocess.CompletedProcess,
+        *,
+        name: str,
+        status_actual: int,
+        status_passed: bool,
+    ) -> None:
+        expected = _expected_report(
+            name=name,
+            field="status",
+            expected_value="ok",
+            expected_status=200,
+            status_actual=status_actual,
+            status_passed=status_passed,
+            field_actual=None,
+            field_passed=False,
+            error=INVALID_RESPONSE,
+        )
+        self.assertEqual(report, expected)
+        self.assertEqual(report["status_check"]["actual"], status_actual)
+        self.assertIs(report["status_check"]["passed"], status_passed)
+        self.assertIsNone(report["field_check"]["actual"], "非法正文的字段 actual 必须为 null")
+        self.assertFalse(report["field_check"]["passed"])
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["error"], INVALID_RESPONSE)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(self.server.get_count, 1, "整个运行只应发送一次 GET")
+
+    def test_nan_in_other_field_with_matching_status_is_invalid(self) -> None:
+        report, completed = self._execute(
+            name="nan-other-field",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"status":"ok","extra":NaN}',
+        )
+        self._assert_invalid_response(
+            report, completed, name="nan-other-field", status_actual=200, status_passed=True
+        )
+
+    def test_infinity_in_other_field_is_invalid(self) -> None:
+        report, completed = self._execute(
+            name="infinity-other-field",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"status":"ok","extra":Infinity}',
+        )
+        self._assert_invalid_response(
+            report, completed, name="infinity-other-field", status_actual=200, status_passed=True
+        )
+
+    def test_negative_infinity_in_other_field_is_invalid(self) -> None:
+        report, completed = self._execute(
+            name="neg-infinity-other-field",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"status":"ok","extra":-Infinity}',
+        )
+        self._assert_invalid_response(
+            report,
+            completed,
+            name="neg-infinity-other-field",
+            status_actual=200,
+            status_passed=True,
+        )
+
+    def test_constants_inside_nested_objects_and_arrays_are_invalid(self) -> None:
+        # 覆盖嵌套对象与数组元素：常量不出现在目标字段，断言原本可以匹配
+        bodies = [
+            b'{"status":"ok","nested":{"extra":NaN}}',
+            b'{"status":"ok","items":[1,2,NaN]}',
+            b'{"status":"ok","items":[{"x":Infinity}]}',
+            b'{"status":"ok","deep":[[-Infinity]]}',
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                report, completed = self._execute(
+                    name="nested-constant",
+                    expected_status=200,
+                    field="status",
+                    expected_value="ok",
+                    response_status=200,
+                    response_body=body,
+                )
+                self._assert_invalid_response(
+                    report,
+                    completed,
+                    name="nested-constant",
+                    status_actual=200,
+                    status_passed=True,
+                )
+
+    def test_constant_as_target_field_value_is_invalid(self) -> None:
+        report, completed = self._execute(
+            name="target-constant",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"status":NaN}',
+        )
+        self._assert_invalid_response(
+            report, completed, name="target-constant", status_actual=200, status_passed=True
+        )
+
+    def test_constant_with_mismatched_status_keeps_status_result(self) -> None:
+        # 状态 404 ≠ 期望 200：错误类别仍为 invalid_response，仅状态码检查变化
+        report, completed = self._execute(
+            name="constant-status-mismatch",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=404,
+            response_body=b'{"status":"ok","extra":NaN}',
+        )
+        self._assert_invalid_response(
+            report,
+            completed,
+            name="constant-status-mismatch",
+            status_actual=404,
+            status_passed=False,
+        )
+
+    def test_quoted_nan_string_in_other_field_still_passes(self) -> None:
+        report, completed = self._execute(
+            name="quoted-nan-ok",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"status":"ok","extra":"NaN"}',
+        )
+        expected = _expected_report(
+            name="quoted-nan-ok",
+            field="status",
+            expected_value="ok",
+            expected_status=200,
+            status_actual=200,
+            status_passed=True,
+            field_actual="ok",
+            field_passed=True,
+            error=None,
+        )
+        self.assertEqual(report, expected)
+        self.assertTrue(report["passed"])
+        self.assertIsNone(report["error"])
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(self.server.get_count, 1)
+
+    def test_quoted_constant_words_in_longer_strings_still_pass(self) -> None:
+        # 文本中出现相同字样不得导致拒绝
+        for body in (
+            b'{"status":"ok","note":"the limit is Infinity and NaN appears"}',
+            b'{"status":"ok","note":"-Infinity is just text here"}',
+        ):
+            with self.subTest(body=body):
+                report, completed = self._execute(
+                    name="constant-words-in-text",
+                    expected_status=200,
+                    field="status",
+                    expected_value="ok",
+                    response_status=200,
+                    response_body=body,
+                )
+                self.assertTrue(report["status_check"]["passed"])
+                self.assertTrue(report["field_check"]["passed"])
+                self.assertTrue(report["passed"])
+                self.assertIsNone(report["error"])
+                self.assertEqual(completed.returncode, 0)
+
+    def test_field_names_containing_constant_words_still_pass(self) -> None:
+        # 字段名中包含这些字样是合法的
+        report, completed = self._execute(
+            name="constant-like-field-name",
+            expected_status=200,
+            field="status",
+            expected_value="ok",
+            response_status=200,
+            response_body=b'{"NaN":1,"Infinity":2,"-Infinity":3,"status":"ok"}',
+        )
+        self.assertTrue(report["status_check"]["passed"])
+        self.assertTrue(report["field_check"]["passed"])
+        self.assertTrue(report["passed"])
+        self.assertIsNone(report["error"])
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(self.server.get_count, 1)
 
 
 if __name__ == "__main__":
