@@ -153,6 +153,16 @@ def _report(case: dict, status, field_actual, status_passed, field_passed, error
     }
 
 
+def _reject_nonstandard_constant(token: str):
+    """json.loads 的 parse_constant 钩子：拒绝未加引号的 NaN/Infinity/-Infinity。
+
+    该钩子只会在解析器遇到未加引号的这三个字面量时被调用，
+    引号内的同名字符串、包含这些字样的字段名或更长字符串都不会触发，
+    因此抛出 ValueError 即可让整份正文落入 invalid_response 分支。
+    """
+    raise ValueError(f"响应包含非标准 JSON 常量: {token}")
+
+
 def execute(case: dict) -> tuple[dict, int]:
     """发送唯一一次 GET（不跟随重定向），返回 (报告, 退出码)。"""
     parsed = case["_parsed"]
@@ -179,9 +189,11 @@ def execute(case: dict) -> tuple[dict, int]:
 
     status_passed = status == case["expected_status"]
 
-    # 响应必须是合法的 UTF-8 JSON 对象，否则字段检查失败、actual 为 null
+    # 响应必须是合法的 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
+    # 未加引号的 NaN/Infinity/-Infinity 不属于标准 JSON，无论出现在
+    # 目标字段、其他字段、嵌套对象还是数组元素中，整份正文都视为无效。
     try:
-        payload = json.loads(body)
+        payload = json.loads(body, parse_constant=_reject_nonstandard_constant)
     except ValueError:
         payload = None
     if not isinstance(payload, dict):
