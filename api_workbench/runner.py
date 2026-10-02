@@ -59,8 +59,17 @@ def load_case(path: str) -> dict:
     if not 100 <= expected_status <= 599:
         raise CaseError("'expected_status' 必须是 100 至 599 之间的整数")
 
-    parsed = urlsplit(url)
-    if parsed.scheme != ALLOWED_SCHEME or parsed.hostname != ALLOWED_HOST:
+    # 括号不成对等结构性非法地址会让 urlsplit（或 .hostname）抛出 ValueError，
+    # 必须在连接前判为用例错误，不得让普通 ValueError 泄漏成未处理异常
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+    except ValueError:
+        raise CaseError(
+            f"'url' 结构无效（无法解析主机与端口），收到 {url!r}"
+        ) from None
+
+    if parsed.scheme != ALLOWED_SCHEME or hostname != ALLOWED_HOST:
         raise CaseError(
             f"'url' 仅支持主机为 {ALLOWED_HOST} 的 HTTP 地址，收到 {url!r}"
         )

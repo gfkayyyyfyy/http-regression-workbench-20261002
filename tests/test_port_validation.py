@@ -26,6 +26,14 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 INVALID_PORTS = ["abc", "-1", "-80", "65536", "99999"]
 
+# 主机部分括号不成对等在 URL 解析阶段即被判定为结构无效的地址
+MALFORMED_URLS = [
+    "http://[127.0.0.1:8765/health",
+    "http://127.0.0.1]:8765/health",
+    "http://[zzz]/health",
+    "http://[127.0.0.1]/health",
+]
+
 
 def _write_case(url: str) -> str:
     """生成与 cases/health.json 同构、仅覆盖 url 的临时用例文件。"""
@@ -121,6 +129,76 @@ class InvalidPortTests(unittest.TestCase):
                 with self.assertRaises(CaseError) as context:
                     load_case(case_path)
                 self.assertIn("端口无效", str(context.exception))
+
+
+class MalformedUrlTests(unittest.TestCase):
+    """URL 结构无效（如主机部分括号不成对）应与非法端口一样判为用例错误。"""
+
+    def test_malformed_urls_rejected_before_connection(self) -> None:
+        for url in MALFORMED_URLS:
+            with self.subTest(url=url):
+                case_path = _write_case(url)
+                self.addCleanup(os.unlink, case_path)
+                stdout, stderr = io.BytesIO(), io.StringIO()
+                with patch("api_workbench.runner.HTTPConnection") as connection_cls:
+                    with (
+                        patch("sys.stdout", stdout),
+                        patch("sys.stderr", stderr),
+                    ):
+                        exit_code = run_case(case_path)
+
+                self.assertEqual(exit_code, 2)
+                self.assertEqual(stdout.getvalue(), b"", "非法用例不得输出报告")
+                message = stderr.getvalue()
+                lines = [line for line in message.splitlines() if line]
+                self.assertEqual(len(lines), 1, f"stderr 应只有一条诊断: {message!r}")
+                self.assertTrue(
+                    message.startswith("api_workbench:"),
+                    f"stderr 应沿用 api_workbench: 前缀: {message!r}",
+                )
+                self.assertIn("结构无效", message)
+                self.assertIn(url, message, "诊断必须包含原始地址")
+                self.assertNotIn("Traceback", message)
+                self.assertEqual(
+                    connection_cls.call_count,
+                    0,
+                    f"地址 {url!r} 结构无效时不得建立连接",
+                )
+
+    def test_load_case_raises_case_error_not_plain_valueerror(self) -> None:
+        for url in MALFORMED_URLS:
+            with self.subTest(url=url):
+                case_path = _write_case(url)
+                self.addCleanup(os.unlink, case_path)
+                with self.assertRaises(CaseError) as context:
+                    load_case(case_path)
+                message = str(context.exception)
+                self.assertIn("结构无效", message)
+                self.assertIn(url, message)
+                # 不得泄漏 urlsplit 的原始 ValueError 文案
+                self.assertNotIn("Invalid IPv6 URL", message)
+                self.assertNotIn("does not appear to be", message)
+
+    def test_malformed_urls_rejected_as_subprocess(self) -> None:
+        for url in MALFORMED_URLS:
+            with self.subTest(url=url):
+                case_path = _write_case(url)
+                self.addCleanup(os.unlink, case_path)
+                completed = subprocess.run(
+                    [sys.executable, "-m", "api_workbench", "run", case_path],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, b"")
+                stderr = completed.stderr.decode("utf-8")
+                lines = [line for line in stderr.splitlines() if line]
+                self.assertEqual(len(lines), 1, f"stderr 应只有一条诊断: {stderr!r}")
+                self.assertTrue(stderr.startswith("api_workbench:"))
+                self.assertIn("结构无效", stderr)
+                self.assertIn(url, stderr)
+                self.assertNotIn("Traceback", stderr)
 
 
 class PortBoundaryTests(unittest.TestCase):
