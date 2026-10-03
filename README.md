@@ -28,7 +28,8 @@ UTF-8 编码的 JSON 对象：
 }
 ```
 
-校验规则：`name`、`url`、`field` 为非空字符串；`expected_value` 为字符串；
+校验规则：`name`、`url`、`field` 为非空字符串；`expected_value` 为字符串或布尔值
+（JSON 的 `true`/`false`）；
 `expected_status` 为 100–599 的整数（布尔值排除）；`url` 仅为主机是 `127.0.0.1`
 的 HTTP 地址，端口必须为 0–65535 的整数（未填写端口、端口段为空或显式 `0`
 时沿用默认 80 端口）。文件不可读、JSON 无法解析或字段无效（含字母、负数等无法
@@ -57,7 +58,15 @@ stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`
 说明：
 
 - 状态码不符时仍会执行字段检查。
-- 字段缺失时 `actual` 为 `null`；字段值不是字符串时原样保留该值，两种情况字段检查均失败。
+- 字段缺失时 `actual` 为 `null`；其他类型的实际值原样保留（保留各自的 JSON
+  类型，布尔不转成文字），这两种情况字段检查均失败。
+- 断言按类型严格匹配：字符串期望只匹配完全相等的字符串；布尔期望只匹配布尔
+  实际值——`true` 不匹配数字 `1` 或字符串 `"true"`，`false` 不匹配数字 `0`、
+  空字符串 `""` 或 `null`。
+- 用例文件中的 `expected_value` 缺失，或为字符串与布尔值之外的类型（数字、
+  `null`、数组、对象，含未加引号的 `NaN`、`Infinity`、`-Infinity`）时，
+  `load_case` 抛出用例错误：不发送请求，stdout 为空，stderr 以
+  `api_workbench: ` 开头并指出 `expected_value`，退出码为 2，不出现 Traceback。
 - 响应正文按严格 JSON 校验：未加引号的 `NaN`、`Infinity`、`-Infinity`
   不是标准 JSON，无论位于目标字段、其他字段、嵌套对象还是数组元素，
   整份正文一律判为 `invalid_response`；状态码是否符合期望不改变该分类。
