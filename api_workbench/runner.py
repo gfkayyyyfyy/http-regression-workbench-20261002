@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import socket
 import sys
 from http.client import HTTPConnection, HTTPException
@@ -26,10 +27,28 @@ def _reject_constant(value: str):
     raise ValueError(f"响应正文包含非标准 JSON 常量: {value}")
 
 
+def _reject_overflow_float(value: str) -> float:
+    """拒绝按现有解析规则会变为 ±Infinity 的数值字面量（如 1e400、-1E+400）。
+
+    该回调对正文中每个带小数点或指数的数字触发（含目标字段、其他字段、
+    嵌套对象与数组元素）；float() 溢出时得到 inf，若原样进入报告，
+    json.dumps 会输出非标准的 Infinity 字面量，破坏整份 JSON。
+    有限值（如 1e308、1e-400 下溢为 0.0）原样返回，不受影响。
+    """
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"响应正文包含溢出为无穷大的数值: {value}")
+    return result
+
+
 def _parse_response_body(body: bytes):
     """按严格 JSON 解析响应正文，返回对象；任何非标准内容均返回 None。"""
     try:
-        return json.loads(body, parse_constant=_reject_constant)
+        return json.loads(
+            body,
+            parse_constant=_reject_constant,
+            parse_float=_reject_overflow_float,
+        )
     except ValueError:
         return None
 
@@ -215,7 +234,8 @@ def execute(case: dict) -> tuple[dict, int]:
 
     # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
     # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
-    # 未加引号 NaN/Infinity/-Infinity 一律解析失败；引号内字符串与字段名不受影响。
+    # 未加引号 NaN/Infinity/-Infinity 一律解析失败；parse_float 使 1e400 等
+    # 溢出为 ±Infinity 的数值字面量同样失败；引号内字符串与字段名不受影响。
     payload = _parse_response_body(body)
     if not isinstance(payload, dict):
         report = _report(
