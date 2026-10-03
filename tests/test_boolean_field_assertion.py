@@ -8,7 +8,7 @@
    字符串期望仍只匹配完全相等的字符串；
 2. 报告的 field_check.expected/actual 保留各自的 JSON 类型，布尔不转成文字；
    字段缺失时 actual 为 null；其他类型的实际值原样保留并判失败；
-3. expected_value 缺失或为字符串与布尔值之外的类型（含未加引号的
+3. expected_value 缺失或为字符串、布尔值与 null 之外的类型（含未加引号的
    NaN/Infinity/-Infinity）时 load_case 抛出 CaseError：不发送请求，
    stdout 为空，stderr 以 api_workbench: 开头并指出 expected_value，
    退出码 2，无 Traceback；
@@ -356,12 +356,11 @@ class BooleanExpectedErrorClassificationTests(_BooleanFlowTestCase):
 
 
 class ExpectedValueTypeValidationTests(unittest.TestCase):
-    """expected_value 只接受字符串或布尔值：其他类型（含非标准常量）一律拒绝。"""
+    """expected_value 接受字符串、布尔值或 null：其他类型（含非标准常量）一律拒绝。"""
 
     # 原始 JSON 文本 → 期望出现在诊断中的字样
     INVALID_RAW_VALUES = [
         ("missing", None),  # None 占位表示不写入该字段
-        ("null", "null"),
         ("integer", "1"),
         ("float", "1.5"),
         ("array", "[]"),
