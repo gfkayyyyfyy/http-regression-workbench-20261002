@@ -121,6 +121,16 @@ def load_case(path: str) -> dict:
             f"'url' 端口无效（必须为 0 至 65535 之间的整数），收到 {url!r}"
         ) from None
 
+    # 实际发往服务端的只有路径与查询（片段不发送，不参与校验）。
+    # 其中的非 ASCII 字符（中文、带重音字母、表情等）必须已做百分号编码；
+    # 未转义的原始字符会让请求行的编码行为依赖底层实现，越过现有错误处理，
+    # 因此必须在连接前作为用例错误拒绝，不做自动编码、不解码已编码内容。
+    request_target = parsed.path + parsed.query
+    if any(ord(char) > 127 for char in request_target):
+        raise CaseError(
+            f"'url' 路径或查询包含未转义的非 ASCII 字符，收到 {url!r}"
+        )
+
     return {
         "name": name,
         "url": url,
