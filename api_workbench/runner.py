@@ -61,12 +61,17 @@ def _is_finite_number(value) -> bool:
 
     未加引号的 NaN/Infinity/-Infinity 以及 1e400 这类指数溢出，
     按 json 默认解析会得到 nan/inf，在此一并判为非法。
+
+    JSON 整数字面量一律解析为 Python 任意精度 int，本身不存在
+    无穷概念——包括超出浮点范围的大整数（如 1 后接 400 个 0），
+    全部合法。math.isfinite 只能用于 float：对超出浮点范围的
+    大整数调用会抛 OverflowError，因此整数分支必须先行返回。
     """
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def load_case(path: str) -> dict:
@@ -81,7 +86,11 @@ def load_case(path: str) -> dict:
         case = json.loads(raw.decode("utf-8"))
     except UnicodeDecodeError as exc:
         raise CaseError(f"用例文件 {path!r} 不是合法的 UTF-8 文本: {exc}") from exc
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
+        # JSONDecodeError 是 ValueError 子类；此外超过 Python 数字文本长度
+        # 限制（见 sys.get_int_max_str_digits，默认 4300 位）时，解析器抛
+        # 裸 ValueError 而非 JSONDecodeError。两者都属用例错误：转为
+        # CaseError，保证不逃逸成 Traceback（不放宽、不突破该长度限制）。
         raise CaseError(f"用例文件 {path!r} 不是合法的 JSON: {exc}") from exc
 
     if not isinstance(case, dict):
@@ -98,8 +107,10 @@ def load_case(path: str) -> dict:
         raise CaseError("'url' 必须为非空字符串")
     if not isinstance(field, str) or not field:
         raise CaseError("'field' 必须为非空字符串")
-    # expected_value 接受字符串、布尔值（true/false）、有限 JSON 数字
-    # 或显式 null（None）。键必须存在：省略该键与写 null 含义不同，
+    # expected_value 接受字符串、布尔值（true/false）、JSON 数字
+    # 或显式 null（None）。数字中整数按任意精度接受（含超出浮点范围的
+    # 大整数，如 1 后接 400 个 0），小数/指数写法则必须解析为有限 float
+    # （1e400、NaN、Infinity 拒绝）。键必须存在：省略该键与写 null 含义不同，
     # 省略仍属用例错误，因此不能用 get 的默认值区分，必须显式检查键是否存在。
     if "expected_value" not in case:
         raise CaseError(
@@ -115,7 +126,8 @@ def load_case(path: str) -> dict:
     ):
         raise CaseError(
             "'expected_value' 必须为字符串、布尔值（true/false）、"
-            "有限数字或 null（不接受数组、对象、NaN、Infinity 或溢出的数值）"
+            "JSON 数字或 null（整数按任意精度接受；不接受数组、对象、"
+            "NaN、Infinity 或 1e400 这类溢出的小数/指数数值）"
         )
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
@@ -233,18 +245,22 @@ def _field_matches(expected, actual) -> bool:
     - 布尔期望只匹配布尔实际值（true 不匹配 1 或 "true"）；
     - 数字期望只匹配数字实际值（布尔除外），按 JSON 解析结果精确比较，
       不设误差容限：1、1.0 与 1e0 互相匹配，0 与 -0.0 相等；
-      1 不匹配 true，0 不匹配 false；
+      1 不匹配 true，0 不匹配 false；超出浮点范围的大整数（如 10**400）
+      仍按任意精度整数精确比较，只匹配逐位相等的整数实际值；
     - 字符串期望只匹配完全相等的字符串；
     - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
     """
     if isinstance(expected, bool):
         return isinstance(actual, bool) and actual == expected
     if isinstance(expected, (int, float)):
-        return (
-            isinstance(actual, (int, float))
-            and not isinstance(actual, bool)
-            and actual == expected
-        )
+        if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+            return False
+        try:
+            return actual == expected
+        except OverflowError:
+            # 超出浮点范围的整数与有限 float 不可能相等（某些 Python 版本
+            # 在跨类型比较时会因整数无法转 float 而抛 OverflowError）。
+            return False
     if expected is None:
         return actual is None
     return isinstance(actual, str) and actual == expected
