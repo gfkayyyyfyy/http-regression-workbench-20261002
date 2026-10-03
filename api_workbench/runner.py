@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sys
 from http.client import HTTPConnection, HTTPException
@@ -15,6 +16,30 @@ ALLOWED_HOST = "127.0.0.1"
 ASSERTION_FAILED = "assertion_failed"
 INVALID_RESPONSE = "invalid_response"
 REQUEST_FAILED = "request_failed"
+
+
+_LONE_SURROGATE = re.compile(
+    r"(?<![\ud800-\udbff])[\udc00-\udfff]"  # 前面没有高代理项的低代理项
+    r"|"
+    r"[\ud800-\udbff](?![\udc00-\udfff])"  # 后面没有低代理项的高代理项
+)
+
+
+def _escape_lone_surrogates(text: str) -> str:
+    """把字符串中的孤立代理项转成 \\uXXXX 转义。
+
+    json.dumps(ensure_ascii=False) 会让字符串值里的代理项原样保留：
+    成对的代理项（如表情）可直接按 UTF-8 编码，必须保持原样；
+    孤立的高/低代理项无法编码为 UTF-8，需改写为六个字符的
+    ``\\uXXXX`` JSON 转义文本——该转义只应出现在 JSON 字符串内，
+    而 dumps 输出中的代理项必然位于字符串内（键或值），故直接替换
+    不会碰到结构字符。替换后经标准库 json 解析可还原出原代理项，
+    不删除、不替换为问号或替代字符，中文、表情、合法代理对与
+    字面反斜杠均不受影响。
+    """
+    return _LONE_SURROGATE.sub(
+        lambda match: f"\\u{ord(match.group(0)):04x}", text
+    )
 
 
 def _reject_constant(value: str):
@@ -262,6 +287,9 @@ def run_case(path: str) -> int:
 
     report, exit_code = execute(case)
     output = json.dumps(report, ensure_ascii=False, indent=2)
+    # 孤立代理项无法按 UTF-8 编码（会抛 UnicodeEncodeError 导致报告中断），
+    # 先改写为 \\uXXXX 转义；合法代理对（表情等）保持原样。
+    output = _escape_lone_surrogates(output)
     sys.stdout.buffer.write((output + "\n").encode("utf-8"))
     sys.stdout.buffer.flush()
     return exit_code
