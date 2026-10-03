@@ -262,6 +262,12 @@ def run_case(path: str) -> int:
 
     report, exit_code = execute(case)
     output = json.dumps(report, ensure_ascii=False, indent=2)
-    sys.stdout.buffer.write((output + "\n").encode("utf-8"))
+    # 用例 JSON 转义（如 \ud800 / \udc00）可能引入孤立代理项，
+    # ensure_ascii=False 会保留它们，直接 UTF-8 编码会抛 UnicodeEncodeError。
+    # backslashreplace 只对无法编码的代理项生效，将其原样转成 ASCII 字面量
+    # \ud800（本就出现在 json 已生成的字符串字面量内部，是合法 JSON 转义），
+    # 解析后与输入值完全一致；普通中文、表情与合法代理对照常输出 UTF-8。
+    encoded = (output + "\n").encode("utf-8", errors="backslashreplace")
+    sys.stdout.buffer.write(encoded)
     sys.stdout.buffer.flush()
     return exit_code
