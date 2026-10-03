@@ -68,8 +68,11 @@ def load_case(path: str) -> dict:
         raise CaseError("'url' 必须为非空字符串")
     if not isinstance(field, str) or not field:
         raise CaseError("'field' 必须为非空字符串")
-    if not isinstance(expected_value, str):
-        raise CaseError("'expected_value' 必须为字符串")
+    # expected_value 只接受字符串或布尔值（true/false）；
+    # bool 是 int 的子类，须用 isinstance(..., bool) 显式接纳，
+    # 数字、null、数组、对象一律拒绝。
+    if not isinstance(expected_value, (str, bool)):
+        raise CaseError("'expected_value' 必须为字符串或布尔值（true/false）")
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
         raise CaseError("'expected_status' 必须为整数（不能是布尔值）")
@@ -228,9 +231,16 @@ def execute(case: dict) -> tuple[dict, int]:
         field_passed = False
     else:
         value = payload[field_name]
-        # 非字符串值原样保留；仅字符串且相等才算通过
+        # 实际值原样保留（保持 JSON 类型，不做文字化转换）。
         field_actual = value
-        field_passed = isinstance(value, str) and value == case["expected_value"]
+        expected_value = case["expected_value"]
+        if isinstance(expected_value, bool):
+            # 布尔期望只匹配布尔实际值：true 不匹配 1 或 "true"，
+            # false 不匹配 0、"" 或 null（bool 是 int 子类，必须用 type 严格区分）
+            field_passed = type(value) is bool and value == expected_value
+        else:
+            # 字符串期望仍只匹配完全相等的字符串
+            field_passed = isinstance(value, str) and value == expected_value
 
     error = None if status_passed and field_passed else ASSERTION_FAILED
     exit_code = 0 if error is None else 1
