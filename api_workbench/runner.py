@@ -59,7 +59,6 @@ def load_case(path: str) -> dict:
     name = case.get("name")
     url = case.get("url")
     field = case.get("field")
-    expected_value = case.get("expected_value")
     expected_status = case.get("expected_status")
 
     if not isinstance(name, str) or not name:
@@ -68,11 +67,16 @@ def load_case(path: str) -> dict:
         raise CaseError("'url' 必须为非空字符串")
     if not isinstance(field, str) or not field:
         raise CaseError("'field' 必须为非空字符串")
-    # expected_value 只接受字符串或布尔值（true/false）。
+    # expected_value 接受字符串、布尔值（true/false）或显式 null（None）。
+    # 键必须存在：省略该键与写 null 含义不同，省略仍属用例错误，
+    # 因此不能用 get 的默认值区分，必须显式检查键是否存在。
+    if "expected_value" not in case:
+        raise CaseError("'expected_value' 缺失：必须为字符串、布尔值或 null")
+    expected_value = case["expected_value"]
     # bool 是 int 的子类，数字（含未加引号的 NaN/Infinity，json 默认将其
-    # 解析为 float）、null、数组、对象等一律拒绝；键缺失时 get 返回 None 同样拒绝。
-    if not isinstance(expected_value, (str, bool)):
-        raise CaseError("'expected_value' 必须为字符串或布尔值（true/false）")
+    # 解析为 float）、数组、对象等一律拒绝；None（JSON null）显式允许。
+    if expected_value is not None and not isinstance(expected_value, (str, bool)):
+        raise CaseError("'expected_value' 必须为字符串、布尔值（true/false）或 null")
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
         raise CaseError("'expected_status' 必须为整数（不能是布尔值）")
@@ -226,7 +230,8 @@ def execute(case: dict) -> tuple[dict, int]:
 
     field_name = case["field"]
     if field_name not in payload:
-        # 字段缺失：actual 为 null
+        # 字段缺失：actual 为 null，但即使期望也是 null 仍判失败——
+        # null 期望只在键存在且值为 null 时通过
         field_actual = None
         field_passed = False
     else:
@@ -234,7 +239,8 @@ def execute(case: dict) -> tuple[dict, int]:
         # 实际值原样保留（保留 JSON 类型，布尔不转文字）；
         # 仅当实际值与期望值类型相同且相等时才通过：
         # 布尔期望只匹配布尔值（true 不匹配 1 或 "true"），
-        # 字符串期望仍只匹配完全相等的字符串。
+        # 字符串期望仍只匹配完全相等的字符串，
+        # null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
         field_actual = value
         field_passed = isinstance(value, type(case["expected_value"])) and value == case[
             "expected_value"
