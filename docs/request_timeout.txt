@@ -1,0 +1,161 @@
+请求超时配置（timeout_seconds）说明
+=====================================
+
+本文说明用例文件中的可选配置项 timeout_seconds 如何影响请求执行与报告
+结果。所有结论均可对照下列源码位置逐项核对（行号以当前提交为准）：
+
+- api_workbench/runner.py
+  - 第 12 行：模块常量 REQUEST_TIMEOUT = 3.0（默认超时，秒）
+  - 第 55-56 行：CaseError 异常类（用例错误）
+  - 第 77-201 行：load_case()，读取并校验用例，含 timeout_seconds 校验
+  - 第 138-157 行：timeout_seconds 的默认值与校验逻辑
+  - 第 204-223 行：_request_failed_report()，请求失败报告的固定结构
+  - 第 283-305 行：execute()，建立连接、发送 GET、读取响应、超时归并
+  - 第 357-374 行：run_case()，用例错误与报告的输出通道、退出码
+- api_workbench/cli.py 第 11-30 行：main()，run 子命令入口（行为不变）
+- 回归测试：tests/test_timeout_seconds_config.py、tests/test_body_timeout.py
+
+一、配置语义：每次网络阻塞等待的上限
+------------------------------------
+
+timeout_seconds 限制的是每一次网络阻塞等待（socket 读/写阻塞）的最长
+秒数，而不是整次命令执行的累计截止时间。它经 execute()
+（runner.py 第 291-295 行）作为 HTTPConnection 的 timeout 参数传入，
+作用于同一条连接上的所有阻塞阶段，包括：
+
+- 等待响应头：connection.getresponse()（runner.py 第 299 行）；
+- 等待响应正文：response.read()（runner.py 第 300 行），即已收到
+  响应头之后、按 Content-Length 收齐正文之前的每一次阻塞读取同样受
+  它约束。
+
+因此"服务端已发响应头但正文迟迟收不齐"与"服务端一直不发响应头"一样，
+都会在超过该秒数后触发超时。它不是从命令启动起算的总预算：连接建立、
+DNS/校验等本地工作不占这个额度，多次阻塞各自独立计时。
+
+二、取值规则（load_case，runner.py 第 138-157 行）
+--------------------------------------------------
+
+1. 省略 timeout_seconds 键时，沿用默认值 REQUEST_TIMEOUT = 3.0 秒
+   （runner.py 第 12、141 行）。README 中"超时固定 3 秒"描述的正是
+   这一默认行为；显式配置后按配置值生效。
+2. 显式提供时，只接受 0.1 至 30 秒（含两端）的有限 JSON 数字，整数与
+   小数均可（如 1、0.5、30、0.1）。校验分两步：
+   - 类型检查（第 144-151 行）：必须是 JSON 数字。布尔值被显式排除
+     （Python 中 bool 是 int 的子类，不挡住则 true 会被当成 1）；
+     字符串、null、数组、对象同样拒绝；
+   - 区间与有限性检查（第 152-157 行）：必须满足 0.1 <= 值 <= 30。
+     NaN 与 ±Infinity 无法通过该区间比较，一并在此拒绝；越界数字
+     （0、负数、0.09、30.1 等）同样拒绝。
+   通过后统一转成 float 存入用例（第 157 行）。
+3. 不做任何转换或默认值回退：非法值不会被当成默认三秒，也不会被
+   截断/取整后接受，一律视为用例错误。
+
+三、非法配置的后果（用例错误路径）
+----------------------------------
+
+上述任一校验失败时，load_case() 抛出 CaseError（runner.py 第 148-156
+行）。run_case()（第 357-362 行）捕获后：
+
+- 命令退出码为 2；
+- stdout 为空（不输出任何报告）；
+- stderr 以 "api_workbench: " 开头，且消息中包含 "timeout_seconds"
+  字样，不出现 Traceback；
+- 不发送任何请求——校验发生在 execute() 建立连接之前，服务端收到
+  的请求数为零。
+
+对应回归测试：tests/test_timeout_seconds_config.py 中
+RejectedTimeoutTests（覆盖 true、false、"1"、null、[]、{}、0、-1、
+-0.5、0.09、30.1、NaN、Infinity、-Infinity，逐一断言退出码 2、
+stdout 为空、stderr 前缀与关键字、服务零请求）；
+AcceptedTimeoutTests 覆盖省略、0.1、30、1、0.5 均被接受。
+
+四、超时发生时的报告（请求失败路径）
+------------------------------------
+
+execute() 把发送请求、等待响应头、读取正文整体置于同一 try 中
+（runner.py 第 296-303 行）：socket.timeout、TimeoutError、OSError、
+HTTPException 中任一异常——无论发生在等待响应头阶段还是读取正文阶段
+——都归并为请求失败，返回 _request_failed_report()（第 204-223 行）
+与退出码 1。该报告结构固定：
+
+- name：用例名称原样保留；
+- passed：false；
+- error："request_failed"；
+- status_check：expected 原样保留，actual 为 null，passed 为 false；
+- field_check：field 与 expected 原样保留，actual 为 null，
+  passed 为 false，present 为 null（响应不可用于字段检查，既不能
+  确认键存在也不能确认缺失）。
+
+注意：即使已经收到 200 响应头、只是正文未收齐，也不会先用已收到的
+状态码生成成功检查——整个请求按失败处理，两项 actual 仍为 null，
+error 仍为 request_failed（不会归为 invalid_response 或
+assertion_failed）。run_case()（第 364-374 行）把该报告作为 stdout
+上唯一的 JSON 文档输出，stderr 为空。
+
+五、受控示例（timeout_seconds = 0.5）
+-------------------------------------
+
+以下两个示例的用例沿用 cases/health.json 的名称、期望状态码与字段
+期望，仅将 url 指向 127.0.0.1 上由本地受控服务提供的临时端口，并加入
+"timeout_seconds": 0.5：
+
+```json
+{
+  "name": "health",
+  "url": "http://127.0.0.1:<临时端口>/health",
+  "expected_status": 200,
+  "field": "status",
+  "expected_value": "ok",
+  "timeout_seconds": 0.5
+}
+```
+
+示例一：响应头等待超时。服务收到 GET 后保持连接但不发送任何响应头。
+约 0.5 秒后 getresponse()（runner.py 第 299 行）超时，命令以退出码 1
+结束，stderr 为空，stdout 仅有一个 JSON 报告：
+
+```json
+{
+  "name": "health",
+  "passed": false,
+  "error": "request_failed",
+  "status_check": {"expected": 200, "actual": null, "passed": false},
+  "field_check": {
+    "field": "status",
+    "expected": "ok",
+    "actual": null,
+    "passed": false,
+    "present": null
+  }
+}
+```
+
+服务只收到一次 GET，超时后没有重试。对应测试：
+tests/test_timeout_seconds_config.py 中
+CustomTimeoutEnforcementTests.test_custom_timeout_bounds_wait_for_stalled_response
+（该用例名称为 "timeout-custom-half-second"，并断言从服务收到 GET 到
+命令结束的等待落在 0.3 至 2 秒之间——若实现忽略配置回退到三秒，等待
+会超过两秒上限而被发现）。
+
+示例二：正文读取超时。服务收到 GET 后立即发送 200 响应头并声明
+Content-Length: 15，但只发送正文前缀 {"status":（10 字节），随后保持
+连接、不补齐剩余 5 字节。约 0.5 秒后 response.read()（runner.py 第
+300 行）超时，结果与示例一完全相同：退出码 1，stderr 为空，stdout
+仅有上述同一结构的 request_failed 报告——已收到的 200 状态码不会
+进入报告，两项 actual 与 field_check.present 均为 null，顶层与两项
+检查的 passed 均为 false，名称、字段名与期望值原样保留。服务同样只
+收到一次 GET，没有重试。对应测试：tests/test_body_timeout.py 中
+CustomBodyTimeoutTests.test_incomplete_body_times_out_with_custom_timeout
+（同文件 test_completed_body_after_short_delay_passes 为成功对照：
+前缀后 0.1 秒补齐 {"status":"ok"} 共 15 字节，命令退出码 0、
+error 为 null、两项 actual 分别为 200 与 "ok"、present 为 true）。
+
+六、不变项
+----------
+
+- serve 与 run 的入口及既有行为不变（api_workbench/cli.py、
+  api_workbench/server.py 未改动）；
+- 默认超时 REQUEST_TIMEOUT 保持 3.0 秒（tests/test_body_timeout.py
+  与 tests/test_timeout_seconds_config.py 均断言该常量仍为 3.0）；
+- 每个用例仍只发送一次 GET，不跟随重定向，超时后不重试
+  （execute()，runner.py 第 283-305 行）。
