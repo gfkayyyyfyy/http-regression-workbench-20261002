@@ -318,6 +318,7 @@ class ValidCaseLoadingControlTests(unittest.TestCase):
                 "field": "status",
                 "expected": "ok",
                 "actual": "ok",
+                "present": True,
                 "passed": True,
             },
         }

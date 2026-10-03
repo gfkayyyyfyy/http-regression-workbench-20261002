@@ -80,6 +80,7 @@ def _expected_report(
     status_actual: int | None,
     status_passed: bool,
     field_actual,
+    field_present: bool | None,
     field_passed: bool,
     error: str | None,
 ) -> dict:
@@ -97,6 +98,7 @@ def _expected_report(
             "field": field,
             "expected": expected_value,
             "actual": field_actual,
+            "present": field_present,
             "passed": field_passed,
         },
     }
@@ -185,6 +187,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual="ok",
+            field_present=True,
             field_passed=True,
             error=None,
         )
@@ -213,6 +216,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual="ok",
+            field_present=True,
             field_passed=False,
             error=ASSERTION_FAILED,
         )
@@ -243,6 +247,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual=None,
+            field_present=False,
             field_passed=False,
             error=ASSERTION_FAILED,
         )
@@ -271,6 +276,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual=1,
+            field_present=True,
             field_passed=False,
             error=ASSERTION_FAILED,
         )
@@ -301,6 +307,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual=None,
+            field_present=True,
             field_passed=False,
             error=ASSERTION_FAILED,
         )
@@ -329,6 +336,7 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             status_actual=500,
             status_passed=False,
             field_actual="ok",
+            field_present=True,
             field_passed=True,
             error=ASSERTION_FAILED,
         )
@@ -363,6 +371,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual=None,
+            field_present=None,
             field_passed=False,
             error=INVALID_RESPONSE,
         )
@@ -391,6 +400,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             status_actual=500,
             status_passed=False,
             field_actual=None,
+            field_present=None,
             field_passed=False,
             error=INVALID_RESPONSE,
         )
@@ -421,6 +431,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual=None,
+            field_present=None,
             field_passed=False,
             error=INVALID_RESPONSE,
         )
@@ -448,6 +459,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             status_actual=404,
             status_passed=False,
             field_actual=None,
+            field_present=None,
             field_passed=False,
             error=INVALID_RESPONSE,
         )
@@ -484,6 +496,7 @@ class NonStandardJsonConstantTests(_ReportFlowTestCase):
             status_actual=status_actual,
             status_passed=status_passed,
             field_actual=None,
+            field_present=None,
             field_passed=False,
             error=INVALID_RESPONSE,
         )
@@ -614,6 +627,7 @@ class NonStandardJsonConstantTests(_ReportFlowTestCase):
             status_actual=200,
             status_passed=True,
             field_actual="ok",
+            field_present=True,
             field_passed=True,
             error=None,
         )

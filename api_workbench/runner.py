@@ -215,12 +215,15 @@ def _request_failed_report(case: dict) -> dict:
             "field": case["field"],
             "expected": case["expected_value"],
             "actual": None,
+            "present": None,
             "passed": False,
         },
     }
 
 
-def _report(case: dict, status, field_actual, status_passed, field_passed, error):
+def _report(
+    case: dict, status, field_actual, field_present, status_passed, field_passed, error
+):
     return {
         "name": case["name"],
         "passed": bool(status_passed and field_passed),
@@ -234,6 +237,7 @@ def _report(case: dict, status, field_actual, status_passed, field_passed, error
             "field": case["field"],
             "expected": case["expected_value"],
             "actual": field_actual,
+            "present": field_present,
             "passed": bool(field_passed),
         },
     }
@@ -302,6 +306,7 @@ def execute(case: dict) -> tuple[dict, int]:
             case,
             status=status,
             field_actual=None,
+            field_present=None,
             status_passed=status_passed,
             field_passed=False,
             error=INVALID_RESPONSE,
@@ -309,7 +314,11 @@ def execute(case: dict) -> tuple[dict, int]:
         return report, 1
 
     field_name = case["field"]
-    if field_name not in payload:
+    # 字段存在性与值匹配分开记录：present 只表示顶层键是否存在
+    # （按完整键名匹配，点号不表示嵌套路径），值为 null、false、0、
+    # 空字符串、数组或对象都不影响存在判断；present 不替代 passed。
+    field_present = field_name in payload
+    if not field_present:
         # 字段缺失：actual 为 null，但即使期望也是 null 仍判失败——
         # null 期望只在键存在且值为 null 时通过
         field_actual = None
@@ -327,6 +336,7 @@ def execute(case: dict) -> tuple[dict, int]:
         case,
         status=status,
         field_actual=field_actual,
+        field_present=field_present,
         status_passed=status_passed,
         field_passed=field_passed,
         error=error,

@@ -221,6 +221,7 @@ class ShortBodyTests(_EarlyCloseFlowTestCase):
                 "field": "status",
                 "expected": "ok",
                 "actual": None,
+                "present": None,
                 "passed": False,
             },
         }
@@ -264,6 +265,7 @@ class ExactLengthTests(_EarlyCloseFlowTestCase):
                 "field": "status",
                 "expected": "ok",
                 "actual": "ok",
+                "present": True,
                 "passed": True,
             },
         }

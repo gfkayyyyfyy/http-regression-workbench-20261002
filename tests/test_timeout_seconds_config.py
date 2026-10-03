@@ -423,6 +423,7 @@ class CustomTimeoutEnforcementTests(_CommandTestCase):
                 "field": "status",
                 "expected": "ok",
                 "actual": None,
+                "present": None,
                 "passed": False,
             },
         }

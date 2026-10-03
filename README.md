@@ -49,7 +49,8 @@ UTF-8 编码的 JSON 对象：
 
 stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`error`，
 以及状态码检查 `status_check` 与字段检查 `field_check`（各含 `expected`、
-`actual`、`passed`，字段检查另含被检查的字段名 `field`）。
+`actual`、`passed`，字段检查另含被检查的字段名 `field` 与存在性标记
+`present`）。
 
 | 场景 | error | 退出码 |
 | --- | --- | --- |
@@ -61,6 +62,12 @@ stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`
 说明：
 
 - 状态码不符时仍会执行字段检查。
+- 字段检查的 `present` 标记字段存在性（JSON 布尔值或 `null`，不替代
+  `passed`）：请求完成且正文通过严格 JSON 校验、顶层为对象时，顶层键
+  存在为 `true`、缺失为 `false`；值为 `null`、`false`、`0`、空字符串、
+  数组或对象都不影响存在判断。`field` 按完整键名匹配，点号不表示嵌套
+  路径。正文无效或顶层不是对象（`invalid_response`）以及请求失败
+  （`request_failed`）时 `present` 为 `null`。
 - 字段缺失时 `actual` 为 `null`；其他类型的实际值原样保留（保留各自的 JSON
   类型，布尔不转成文字），这两种情况字段检查均失败。
 - 断言按类型严格匹配：字符串期望只匹配完全相等的字符串；布尔期望只匹配布尔

@@ -108,6 +108,7 @@ def _expected_report(
     status_actual: int,
     status_passed: bool,
     field_actual,
+    field_present: bool | None,
     field_passed: bool,
     error: str | None,
 ) -> dict:
@@ -125,6 +126,7 @@ def _expected_report(
             "field": "status",
             "expected": "redirect",
             "actual": field_actual,
+            "present": field_present,
             "passed": field_passed,
         },
     }
@@ -244,6 +246,7 @@ class RelativeLocationTests(RedirectNotFollowedTestCase):
             status_actual=302,
             status_passed=False,
             field_actual="redirect",
+            field_present=True,
             field_passed=True,
             error=ASSERTION_FAILED,
         )
@@ -261,6 +264,7 @@ class RelativeLocationTests(RedirectNotFollowedTestCase):
             status_actual=302,
             status_passed=True,
             field_actual="redirect",
+            field_present=True,
             field_passed=True,
             error=None,
         )
@@ -285,6 +289,7 @@ class AbsoluteLocationTests(RedirectNotFollowedTestCase):
             status_actual=302,
             status_passed=False,
             field_actual="redirect",
+            field_present=True,
             field_passed=True,
             error=ASSERTION_FAILED,
         )
@@ -302,6 +307,7 @@ class AbsoluteLocationTests(RedirectNotFollowedTestCase):
             status_actual=302,
             status_passed=True,
             field_actual="redirect",
+            field_present=True,
             field_passed=True,
             error=None,
         )
