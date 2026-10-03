@@ -61,12 +61,16 @@ def _is_finite_number(value) -> bool:
 
     未加引号的 NaN/Infinity/-Infinity 以及 1e400 这类指数溢出，
     按 json 默认解析会得到 nan/inf，在此一并判为非法。
+
+    任意大小的 int 都是精确且有限的（如 1 后接 400 个 0），直接接受；
+    math.isfinite 会先把入参转成 float，对超大整数抛 OverflowError，
+    因此有限性检查只能作用于 float。
     """
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, int):
+        return True
+    return math.isfinite(value)
 
 
 def load_case(path: str) -> dict:
@@ -233,18 +237,25 @@ def _field_matches(expected, actual) -> bool:
     - 布尔期望只匹配布尔实际值（true 不匹配 1 或 "true"）；
     - 数字期望只匹配数字实际值（布尔除外），按 JSON 解析结果精确比较，
       不设误差容限：1、1.0 与 1e0 互相匹配，0 与 -0.0 相等；
-      1 不匹配 true，0 不匹配 false；
+      1 不匹配 true，0 不匹配 false；任意位数的整数（如 1 后接 400 个 0）
+      按精确整数比较，不转浮点，不截断、不舍入；
     - 字符串期望只匹配完全相等的字符串；
     - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
     """
     if isinstance(expected, bool):
         return isinstance(actual, bool) and actual == expected
     if isinstance(expected, (int, float)):
-        return (
-            isinstance(actual, (int, float))
-            and not isinstance(actual, bool)
-            and actual == expected
-        )
+        if not isinstance(actual, (int, float)) or isinstance(actual, bool):
+            return False
+        # 两个 int 直接精确比较，支持任意位数而不经过浮点转换；
+        # int 与 float 混比在旧版 Python 上可能因超大整数转 float
+        # 抛出 OverflowError，数值既无法相等即视为不匹配。
+        if isinstance(expected, int) and isinstance(actual, int):
+            return actual == expected
+        try:
+            return actual == expected
+        except OverflowError:
+            return False
     if expected is None:
         return actual is None
     return isinstance(actual, str) and actual == expected
