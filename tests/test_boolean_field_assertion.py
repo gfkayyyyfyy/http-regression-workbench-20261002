@@ -8,10 +8,11 @@
    字符串期望仍只匹配完全相等的字符串；
 2. 报告的 field_check.expected/actual 保留各自的 JSON 类型，布尔不转成文字；
    字段缺失时 actual 为 null；其他类型的实际值原样保留并判失败；
-3. expected_value 缺失或为字符串、布尔值与 null 之外的类型（含未加引号的
-   NaN/Infinity/-Infinity）时 load_case 抛出 CaseError：不发送请求，
-   stdout 为空，stderr 以 api_workbench: 开头并指出 expected_value，
-   退出码 2，无 Traceback（显式 null 期望的回归见 test_null_field_assertion.py）；
+3. expected_value 缺失或为字符串、布尔值、有限数字与 null 之外的类型
+   （数组、对象，含未加引号的 NaN/Infinity/-Infinity）时 load_case 抛出
+   CaseError：不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
+   expected_value，退出码 2，无 Traceback（显式 null 期望的回归见
+   test_null_field_assertion.py，数字期望见 test_number_field_assertion.py）；
 4. 布尔期望不改变既有分类：非 JSON 对象或含非标准常量的响应仍为
    invalid_response，连接失败仍为 request_failed，退出码 1；
 5. 每次有效执行仅发送一次 GET。
@@ -356,13 +357,11 @@ class BooleanExpectedErrorClassificationTests(_BooleanFlowTestCase):
 
 
 class ExpectedValueTypeValidationTests(unittest.TestCase):
-    """expected_value 接受字符串、布尔值与 null：其他类型（含非标准常量）一律拒绝。"""
+    """expected_value 接受字符串、布尔值、有限数字与 null：其他类型（含非标准常量）一律拒绝。"""
 
     # 原始 JSON 文本 → 期望出现在诊断中的字样
     INVALID_RAW_VALUES = [
         ("missing", None),  # None 占位表示不写入该字段
-        ("integer", "1"),
-        ("float", "1.5"),
         ("array", "[]"),
         ("object", "{}"),
         ("nan", "NaN"),

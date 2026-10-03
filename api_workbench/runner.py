@@ -56,6 +56,19 @@ class CaseError(ValueError):
     """用例文件不可读、无法解析或字段校验失败。"""
 
 
+def _is_finite_number(value) -> bool:
+    """是否为有限 JSON 数字（int/float，布尔除外）。
+
+    未加引号的 NaN/Infinity/-Infinity 以及 1e400 这类指数溢出，
+    按 json 默认解析会得到 nan/inf，在此一并判为非法。
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 def load_case(path: str) -> dict:
     """读取并校验用例文件，失败时抛出 CaseError（不发送任何请求）。"""
     try:
@@ -85,16 +98,25 @@ def load_case(path: str) -> dict:
         raise CaseError("'url' 必须为非空字符串")
     if not isinstance(field, str) or not field:
         raise CaseError("'field' 必须为非空字符串")
-    # expected_value 接受字符串、布尔值（true/false）或显式 null（None）。
-    # 键必须存在：省略该键与写 null 含义不同，省略仍属用例错误，
-    # 因此不能用 get 的默认值区分，必须显式检查键是否存在。
+    # expected_value 接受字符串、布尔值（true/false）、有限 JSON 数字
+    # 或显式 null（None）。键必须存在：省略该键与写 null 含义不同，
+    # 省略仍属用例错误，因此不能用 get 的默认值区分，必须显式检查键是否存在。
     if "expected_value" not in case:
-        raise CaseError("'expected_value' 缺失：必须为字符串、布尔值或 null")
+        raise CaseError(
+            "'expected_value' 缺失：必须为字符串、布尔值、有限数字或 null"
+        )
     expected_value = case["expected_value"]
-    # bool 是 int 的子类，数字（含未加引号的 NaN/Infinity，json 默认将其
-    # 解析为 float）、数组、对象等一律拒绝；None（JSON null）显式允许。
-    if expected_value is not None and not isinstance(expected_value, (str, bool)):
-        raise CaseError("'expected_value' 必须为字符串、布尔值（true/false）或 null")
+    # bool 是 int 的子类，需先识别布尔；数组、对象等一律拒绝；
+    # None（JSON null）显式允许。
+    if (
+        expected_value is not None
+        and not isinstance(expected_value, (str, bool))
+        and not _is_finite_number(expected_value)
+    ):
+        raise CaseError(
+            "'expected_value' 必须为字符串、布尔值（true/false）、"
+            "有限数字或 null（不接受数组、对象、NaN、Infinity 或溢出的数值）"
+        )
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
         raise CaseError("'expected_status' 必须为整数（不能是布尔值）")
@@ -205,6 +227,29 @@ def _report(case: dict, status, field_actual, status_passed, field_passed, error
     }
 
 
+def _field_matches(expected, actual) -> bool:
+    """按类型严格匹配字段期望值与实际值。
+
+    - 布尔期望只匹配布尔实际值（true 不匹配 1 或 "true"）；
+    - 数字期望只匹配数字实际值（布尔除外），按 JSON 解析结果精确比较，
+      不设误差容限：1、1.0 与 1e0 互相匹配，0 与 -0.0 相等；
+      1 不匹配 true，0 不匹配 false；
+    - 字符串期望只匹配完全相等的字符串；
+    - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
+    """
+    if isinstance(expected, bool):
+        return isinstance(actual, bool) and actual == expected
+    if isinstance(expected, (int, float)):
+        return (
+            isinstance(actual, (int, float))
+            and not isinstance(actual, bool)
+            and actual == expected
+        )
+    if expected is None:
+        return actual is None
+    return isinstance(actual, str) and actual == expected
+
+
 def execute(case: dict) -> tuple[dict, int]:
     """发送唯一一次 GET（不跟随重定向），返回 (报告, 退出码)。"""
     parsed = case["_parsed"]
@@ -256,14 +301,9 @@ def execute(case: dict) -> tuple[dict, int]:
     else:
         value = payload[field_name]
         # 实际值原样保留（保留 JSON 类型，布尔不转文字）；
-        # 仅当实际值与期望值类型相同且相等时才通过：
-        # 布尔期望只匹配布尔值（true 不匹配 1 或 "true"），
-        # 字符串期望仍只匹配完全相等的字符串，
-        # null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
+        # 仅当实际值与期望值类型相同且相等时才通过（规则见 _field_matches）。
         field_actual = value
-        field_passed = isinstance(value, type(case["expected_value"])) and value == case[
-            "expected_value"
-        ]
+        field_passed = _field_matches(case["expected_value"], value)
 
     error = None if status_passed and field_passed else ASSERTION_FAILED
     exit_code = 0 if error is None else 1
