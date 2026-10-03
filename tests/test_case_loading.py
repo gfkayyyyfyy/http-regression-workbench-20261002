@@ -319,6 +319,7 @@ class ValidCaseLoadingControlTests(unittest.TestCase):
                 "expected": "ok",
                 "actual": "ok",
                 "passed": True,
+                "present": True,
             },
         }
         self.assertEqual(report, expected)

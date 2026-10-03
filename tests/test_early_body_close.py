@@ -222,6 +222,7 @@ class ShortBodyTests(_EarlyCloseFlowTestCase):
                 "expected": "ok",
                 "actual": None,
                 "passed": False,
+                "present": None,
             },
         }
         self.assertEqual(report, expected)
@@ -265,6 +266,7 @@ class ExactLengthTests(_EarlyCloseFlowTestCase):
                 "expected": "ok",
                 "actual": "ok",
                 "passed": True,
+                "present": True,
             },
         }
         self.assertEqual(report, expected)

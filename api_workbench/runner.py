@@ -216,11 +216,22 @@ def _request_failed_report(case: dict) -> dict:
             "expected": case["expected_value"],
             "actual": None,
             "passed": False,
+            # 连接失败/超时/正文提前断开：响应无法用于字段检查，
+            # 既不能确认键存在也不能确认缺失，present 为 null
+            "present": None,
         },
     }
 
 
-def _report(case: dict, status, field_actual, status_passed, field_passed, error):
+def _report(
+    case: dict,
+    status,
+    field_actual,
+    status_passed,
+    field_passed,
+    error,
+    field_present,
+):
     return {
         "name": case["name"],
         "passed": bool(status_passed and field_passed),
@@ -235,6 +246,9 @@ def _report(case: dict, status, field_actual, status_passed, field_passed, error
             "expected": case["expected_value"],
             "actual": field_actual,
             "passed": bool(field_passed),
+            # present 只表达顶层键是否存在，不参与 passed 判定：
+            # 完整响应为 JSON 对象时为 true/false，无法检查时为 null
+            "present": field_present,
         },
     }
 
@@ -305,13 +319,18 @@ def execute(case: dict) -> tuple[dict, int]:
             status_passed=status_passed,
             field_passed=False,
             error=INVALID_RESPONSE,
+            # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
+            field_present=None,
         )
         return report, 1
 
     field_name = case["field"]
-    if field_name not in payload:
-        # 字段缺失：actual 为 null，但即使期望也是 null 仍判失败——
-        # null 期望只在键存在且值为 null 时通过
+    # present 只按完整键名判断顶层键是否存在（点号不表示嵌套路径）：
+    # 值为 null、false、0、空字符串、数组或对象都算存在。
+    field_present = field_name in payload
+    if not field_present:
+        # 字段缺失：present 为 false、actual 为 null，即使期望也是 null
+        # 仍判失败——null 期望只在键存在且值为 null 时通过
         field_actual = None
         field_passed = False
     else:
@@ -330,6 +349,7 @@ def execute(case: dict) -> tuple[dict, int]:
         status_passed=status_passed,
         field_passed=field_passed,
         error=error,
+        field_present=field_present,
     )
     return report, exit_code
 

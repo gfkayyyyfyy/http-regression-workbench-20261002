@@ -49,7 +49,19 @@ UTF-8 编码的 JSON 对象：
 
 stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`error`，
 以及状态码检查 `status_check` 与字段检查 `field_check`（各含 `expected`、
-`actual`、`passed`，字段检查另含被检查的字段名 `field`）。
+`actual`、`passed`，字段检查另含被检查的字段名 `field` 与字段存在信息
+`present`）。
+
+`field_check.present` 只表达 `field` 指定的顶层键是否存在，取 JSON 布尔值
+或 `null`，不替代 `passed`、不参与总判定（原有报告字段、退出码语义不变）：
+
+- 请求完整结束、正文通过严格 JSON 校验且顶层为对象时：键存在为 `true`，
+  键缺失为 `false`。值为 `null`、`false`、`0`、空字符串、数组或对象都不影响
+  存在判断；值的匹配仍遵循下述严格类型规则。`field` 按完整键名匹配，
+  点号不表示嵌套路径（`"a.b"` 不会去查嵌套对象 `{"a":{"b":…}}`）。
+- 正文无效或顶层不是对象（`invalid_response`），或连接失败、等待超时、
+  未收满声明长度就断开（`request_failed`）时：响应无法用于字段检查，
+  `present` 为 `null`。
 
 | 场景 | error | 退出码 |
 | --- | --- | --- |
@@ -60,9 +72,11 @@ stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`
 
 说明：
 
-- 状态码不符时仍会执行字段检查。
-- 字段缺失时 `actual` 为 `null`；其他类型的实际值原样保留（保留各自的 JSON
-  类型，布尔不转成文字），这两种情况字段检查均失败。
+- 状态码不符时仍会执行字段检查（含 `present` 的计算），两项检查结果各自保留。
+- 字段缺失时 `present` 为 `false`、`actual` 为 `null`；键存在时 `present` 为
+  `true`，其他类型的实际值原样保留（保留各自的 JSON 类型，布尔不转成文字），
+  值不匹配时字段检查仍失败。响应无法用于字段检查时（`invalid_response` 与
+  `request_failed`）`present` 为 `null`。
 - 断言按类型严格匹配：字符串期望只匹配完全相等的字符串；布尔期望只匹配布尔
   实际值——`true` 不匹配数字 `1` 或字符串 `"true"`，`false` 不匹配数字 `0`、
   空字符串 `""` 或 `null`；数字期望只匹配数字实际值（布尔除外），按 JSON

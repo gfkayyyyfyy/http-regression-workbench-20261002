@@ -424,6 +424,7 @@ class CustomTimeoutEnforcementTests(_CommandTestCase):
                 "expected": "ok",
                 "actual": None,
                 "passed": False,
+                "present": None,
             },
         }
         self.assertEqual(report, expected)

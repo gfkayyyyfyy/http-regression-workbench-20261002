@@ -177,6 +177,7 @@ def _expected_timeout_report(
             "expected": expected_value,
             "actual": None,
             "passed": False,
+            "present": None,
         },
     }
 

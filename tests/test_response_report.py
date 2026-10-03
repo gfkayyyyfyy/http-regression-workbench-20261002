@@ -82,8 +82,13 @@ def _expected_report(
     field_actual,
     field_passed: bool,
     error: str | None,
+    field_present: bool | None = True,
 ) -> dict:
-    """按 runner 的报告结构构造期望报告（整体内容比较，不依赖键顺序/缩进）。"""
+    """按 runner 的报告结构构造期望报告（整体内容比较，不依赖键顺序/缩进）。
+
+    field_present 默认为 True：合法对象且键存在的场景最多；缺键场景传
+    False，invalid_response 场景传 None。
+    """
     return {
         "name": name,
         "passed": bool(status_passed and field_passed),
@@ -98,6 +103,7 @@ def _expected_report(
             "expected": expected_value,
             "actual": field_actual,
             "passed": field_passed,
+            "present": field_present,
         },
     }
 
@@ -245,9 +251,11 @@ class ValidObjectFieldAssertionTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=ASSERTION_FAILED,
+            field_present=False,
         )
         self.assertEqual(report, expected)
         self.assertIsNone(report["field_check"]["actual"], "字段缺失时 actual 为 null")
+        self.assertIs(report["field_check"]["present"], False, "字段缺失时 present 为 false")
         self.assertFalse(report["field_check"]["passed"])
         self.assertTrue(report["status_check"]["passed"])
         self.assertFalse(report["passed"])
@@ -365,6 +373,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         self.assertTrue(report["status_check"]["passed"], "收到的状态码检查结果必须保留")
@@ -393,6 +402,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         # 状态码与字段检查必须分别记录，不能被 invalid_response 覆盖
@@ -423,6 +433,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         self.assertTrue(report["status_check"]["passed"])
@@ -450,6 +461,7 @@ class InvalidResponseClassificationTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         self.assertEqual(report["status_check"]["actual"], 404)
@@ -486,11 +498,13 @@ class NonStandardJsonConstantTests(_ReportFlowTestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         self.assertEqual(report["status_check"]["actual"], status_actual)
         self.assertIs(report["status_check"]["passed"], status_passed)
         self.assertIsNone(report["field_check"]["actual"], "非法正文的字段 actual 必须为 null")
+        self.assertIsNone(report["field_check"]["present"], "非法正文无法检查字段，present 为 null")
         self.assertFalse(report["field_check"]["passed"])
         self.assertFalse(report["passed"])
         self.assertEqual(report["error"], INVALID_RESPONSE)

@@ -126,6 +126,8 @@ def _expected_report(
             "expected": "redirect",
             "actual": field_actual,
             "passed": field_passed,
+            # 重定向响应正文仍是含目标键的合法 JSON 对象，present 为 true
+            "present": True,
         },
     }
 

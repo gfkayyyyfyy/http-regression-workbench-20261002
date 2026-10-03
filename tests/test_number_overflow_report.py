@@ -93,8 +93,13 @@ def _expected_report(
     field_actual,
     field_passed: bool,
     error: str | None,
+    field_present: bool | None = True,
 ) -> dict:
-    """按 runner 的报告结构构造期望报告（整体内容比较，不依赖键顺序/缩进）。"""
+    """按 runner 的报告结构构造期望报告（整体内容比较，不依赖键顺序/缩进）。
+
+    field_present 默认为 True（合法对象且键存在）；缺键传 False，
+    invalid_response 传 None。
+    """
     return {
         "name": name,
         "passed": bool(status_passed and field_passed),
@@ -109,6 +114,7 @@ def _expected_report(
             "expected": expected_value,
             "actual": field_actual,
             "passed": field_passed,
+            "present": field_present,
         },
     }
 
@@ -194,6 +200,7 @@ class NumberOverflowTestCase(unittest.TestCase):
             field_actual=None,
             field_passed=False,
             error=INVALID_RESPONSE,
+            field_present=None,
         )
         self.assertEqual(report, expected)
         # 用例名称、字段名与期望值必须保留
@@ -204,6 +211,7 @@ class NumberOverflowTestCase(unittest.TestCase):
         self.assertEqual(report["status_check"]["actual"], status_actual)
         self.assertIs(report["status_check"]["passed"], status_passed)
         self.assertIsNone(report["field_check"]["actual"], "溢出正文的字段 actual 必须为 null")
+        self.assertIsNone(report["field_check"]["present"], "溢出正文无法检查字段，present 为 null")
         self.assertFalse(report["field_check"]["passed"])
         self.assertFalse(report["passed"])
         self.assertEqual(report["error"], INVALID_RESPONSE)
