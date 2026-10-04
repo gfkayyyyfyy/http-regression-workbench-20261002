@@ -40,11 +40,37 @@ def _parse_float_finite(value: str):
     return result
 
 
+# 响应正文开头允许出现一个 UTF-8 BOM；utf-8-sig 仅消费开头的 BOM，
+# 其余字节仍按严格 UTF-8 解码，BOM 之外的非法字节（如 ED A0 80）
+# 不会被忽略或替换，照常抛 UnicodeDecodeError。
+BODY_ENCODING = "utf-8-sig"
+
+
 def _parse_response_body(body: bytes):
-    """按严格 JSON 解析响应正文，返回对象；任何非标准内容均返回 None。"""
+    """按严格 UTF-8 与严格 JSON 解析响应正文，返回对象；任一不满足均返回 None。
+
+    先对*完整*正文做严格 UTF-8 解码，再把文本交给 JSON 解析器：
+
+    - 不查看响应头的 charset，也不据此改用其他编码；因此 UTF-16、UTF-32
+      正文（含带 BOM 的）必然解码失败，不会像 json.loads(bytes) 那样
+      按 BOM 自动嗅探编码后接受；
+    - 不忽略坏字节、不替换成替代字符：非法 UTF-8 字节（如 UTF-8 编码的
+      孤立代理项 ED A0 80，或出现在非目标字段、对象键、嵌套内容中的
+      其他非法序列）使整份正文判为无效，不能让目标字段断言通过；
+    - 仅允许正文开头存在一个 UTF-8 BOM（utf-8-sig）。
+
+    不能直接 json.loads(bytes)：标准库会自行按 BOM 嗅探 UTF-16/UTF-32，
+    且其内部检测接受用 UTF-8 编码出的孤立代理项字节。先解码成 str 再
+    解析即可关闭这两条旁路；JSON 文本里以 ASCII 转义书写的 \\ud800 /
+    \\udc00 属于 JSON 语法而非原始字节，仍按既有规则解析并保留。
+    """
+    try:
+        text = body.decode(BODY_ENCODING)
+    except UnicodeDecodeError:
+        return None
     try:
         return json.loads(
-            body,
+            text,
             parse_constant=_reject_constant,
             parse_float=_parse_float_finite,
         )
@@ -310,7 +336,11 @@ def execute(case: dict) -> tuple[dict, int]:
     else:
         status_passed = status == case["expected_status"]
 
-        # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
+        # 响应必须是严格 UTF-8（允许开头一个 BOM）编码的合法严格 JSON 对象，
+        # 否则字段检查失败、actual 为 null。编码检查在 JSON 解析之前覆盖整份
+        # 正文：UTF-16/UTF-32 正文、非法 UTF-8 字节（含 ED A0 80 这类原始
+        # 代理项字节）即使位于非目标字段、对象键或嵌套内容也使整份正文无效，
+        # 不依据响应头 charset 改判，不忽略或替换坏字节。
         # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
         # 未加引号 NaN/Infinity/-Infinity 一律解析失败；parse_float 使 1e400 等
         # 指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名不受影响。
