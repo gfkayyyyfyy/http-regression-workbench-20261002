@@ -40,11 +40,41 @@ def _parse_float_finite(value: str):
     return result
 
 
+def _decode_body(body: bytes):
+    """将完整响应正文严格解码为 Unicode 文本，失败时返回 None。
+
+    只接受严格 UTF-8：编码检查覆盖整份正文，任何非法 UTF-8 字节
+    （如 UTF-16/UTF-32 的 BOM 与 NUL 排布、孤立代理项的原始字节
+    ED A0 80、截断或超长序列）都令解码失败。绝不依据响应头的
+    charset 改用其他编码，也不忽略坏字节或以替代字符顶替。
+
+    唯一放宽：正文开头允许恰好一个 UTF-8 BOM（EF BB BF），解码后
+    剥去这一个字符；其后再出现的 BOM 作为普通 U+FEFF 保留
+    （落在 JSON 语法位置会令解析失败，落在字符串内则是合法字符）。
+    """
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return text
+
+
 def _parse_response_body(body: bytes):
-    """按严格 JSON 解析响应正文，返回对象；任何非标准内容均返回 None。"""
+    """按严格编码与严格 JSON 解析响应正文，返回对象；任何无效内容均返回 None。
+
+    先在字节层面完成严格 UTF-8 解码（见 _decode_body），再把文本交给
+    json：直接向 json.loads 传 bytes 会让其按 BOM 自动识别 UTF-16/UTF-32
+    正文，因此必须先解码为 str 以封死该旁路。ASCII 正文中以 JSON 转义
+    书写的 \\ud800 / \\udc00 解码后是合法文本，照常解析为孤立代理项。
+    """
+    text = _decode_body(body)
+    if text is None:
+        return None
     try:
         return json.loads(
-            body,
+            text,
             parse_constant=_reject_constant,
             parse_float=_parse_float_finite,
         )
@@ -310,10 +340,14 @@ def execute(case: dict) -> tuple[dict, int]:
     else:
         status_passed = status == case["expected_status"]
 
-        # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
-        # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
-        # 未加引号 NaN/Infinity/-Infinity 一律解析失败；parse_float 使 1e400 等
-        # 指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名不受影响。
+        # 响应必须是严格 UTF-8（开头至多一个 BOM）编码的合法严格 JSON 对象，
+        # 否则字段检查失败、actual 为 null。_decode_body 对整份正文做严格
+        # UTF-8 检查：非法字节（含 UTF-16/UTF-32 正文、孤立代理项的原始字节）
+        # 无论位于目标字段、其他字段、对象键还是嵌套内容都令整份正文无效，
+        # 不参考响应头 charset、不忽略或替换坏字节。parse_constant 使整份正文
+        # 中未加引号的 NaN/Infinity/-Infinity 一律解析失败；parse_float 使
+        # 1e400 等指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名
+        # 不受影响（ASCII 转义的 \ud800 等仍是合法文本）。
         payload = _parse_response_body(body)
         if not isinstance(payload, dict):
             # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
