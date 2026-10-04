@@ -212,6 +212,28 @@ def load_case(path: str) -> dict:
             )
         timeout_seconds = float(raw_timeout)
 
+    # 必须在 urlsplit 之前检查原始制表符/换行/回车（U+0009/U+000A/U+000D）：
+    # URL 解析器会把这三种字符当作可忽略的空白直接删去（如 /he\talth 解析成
+    # /health、?q=o\nk 的查询值拼成 ok），使实际请求地址偏离用例。因此只要
+    # 第一个 # 之前（协议、主机、端口、路径、查询任一处）出现这三种原始字符，
+    # 一律在用例加载阶段拒绝：不删除字符、不自动编码后继续请求，也不建立连接。
+    # 片段（# 之后）不发送给服务端，其中的这些字符不参与校验；%09/%0A/%0D
+    # （含小写）只是普通的百分号文本，并非原始控制字符，保持原样发送，
+    # 不解码、不重复编码。JSON 的 \t/\n/\r 与 \u0009/\u000a/\u000d
+    # 转义还原后与直接书写的字符按同一规则拒绝。
+    request_part = url.split("#", 1)[0]
+    control_display = (("\t", "\\t"), ("\n", "\\n"), ("\r", "\\r"))
+    found_controls = [
+        escaped for char, escaped in control_display if char in request_part
+    ]
+    if found_controls:
+        # repr 会把三种字符渲染成 \t/\n/\r 字面量，诊断中既不会出现真实
+        # 制表符或回车，也不会引入额外换行，stderr 始终只有一行
+        raise CaseError(
+            f"'url' 在第一个 # 之前包含未编码的控制字符 "
+            f"{'、'.join(found_controls)}，收到 {url!r}"
+        )
+
     try:
         # 括号不成对等结构无效地址会让 urlsplit 本身（或其 hostname 属性）
         # 抛出 ValueError，必须在连接前作为用例错误拒绝，不得修补后继续请求
