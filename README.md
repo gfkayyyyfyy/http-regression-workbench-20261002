@@ -39,6 +39,14 @@ UTF-8 编码的 JSON 对象：
 的 HTTP 地址，端口必须为 0–65535 的整数（未填写端口、端口段为空或显式 `0`
 时沿用默认 80 端口）。文件不可读、JSON 无法解析或字段无效（含字母、负数等无法
 解析的端口及超出范围的端口）时不发送请求：stdout 为空、stderr 说明原因、退出码为 2。
+用例 JSON 的嵌套深度超过当前 Python 运行时递归上限（如数千层单元素数组或多层对象
+包裹数字 0，无论位于顶层数据还是 `name`、`url` 等合法字段之外的额外字段）时，
+解析器在解析阶段触发 RecursionError：同样按用例错误以退出码 2 拒绝——
+`load_case` 抛出包含传入文件路径的错误，说明 JSON 嵌套过深、无法完成解析；
+诊断以 `api_workbench: ` 开头、包含路径与原因、不输出 Traceback，也不生成执行报告。
+不跳过深层内容、只凭已读到的字段继续执行，因此不建立连接、不发送请求；
+不新增固定嵌套层数限制，也不改变运行时原有递归上限。额外字段为浅层嵌套
+（如 `"extra": [[0]]`）时仍被忽略，不影响用例执行。
 `url` 结构无效（如主机部分括号不成对：`http://[127.0.0.1:8765/health`、
 `http://127.0.0.1]:8765/health`）时同样不修补、不连接，按用例错误以退出码 2 拒绝，
 诊断以 `api_workbench: ` 开头且包含原始地址，不输出 Traceback。
@@ -137,3 +145,6 @@ stdout 仅输出一个 JSON 报告（不落盘），包含 `name`、`passed`、`
 
 - `cases/health.json`：通过用例。
 - `cases/health_wrong_value.json`：仅将 `expected_value` 改为 `"wrong"` 的失败用例。
+- `cases/health_deep_array.json` / `cases/health_deep_object.json`：以 health 用例
+  全部必需字段为基础，`extra` 分别为 2000 层单元素数组或多层对象包裹数字 0；
+  解析阶段触发 RecursionError，按用例错误以退出码 2 拒绝，不发送请求。

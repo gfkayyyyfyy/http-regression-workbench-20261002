@@ -150,10 +150,26 @@ def load_case(path: str) -> dict:
     except OSError as exc:
         raise CaseError(f"无法读取用例文件 {path!r}: {exc}") from exc
 
+    # 与响应正文解析（见 _parse_response_body）一样使用纯 Python 扫描器：
+    # 部分运行时的默认 C 扫描器递归预算与 sys.getrecursionlimit() 脱钩，能
+    # 成功解析嵌套层数远超当前运行时递归上限的用例；纯 Python 扫描器的每层
+    # 嵌套都消耗 Python 递归栈，使这类用例在解析阶段统一抛出 RecursionError。
+    # 这样捕获到的就是解析器实际触发的递归错误：既不新增固定嵌套层数限制，
+    # 也不改变运行时原有递归上限。
+    decoder = JSONDecoder()
+    decoder.scan_once = py_make_scanner(decoder)
     try:
-        case = json.loads(raw.decode("utf-8"))
+        case = decoder.decode(raw.decode("utf-8"))
     except UnicodeDecodeError as exc:
         raise CaseError(f"用例文件 {path!r} 不是合法的 UTF-8 文本: {exc}") from exc
+    except RecursionError as exc:
+        # 嵌套深度超过当前 Python 运行时递归上限（如数千层单元素数组或
+        # 多层对象包裹，无论位于顶层数据还是 name/url 等合法字段之外的
+        # 额外字段）：整份用例无法完成解析，按用例错误拒绝，绝不跳过深层
+        # 内容、只凭已读到的字段继续执行，也不建立任何 HTTP 连接。
+        raise CaseError(
+            f"用例文件 {path!r} 的 JSON 嵌套过深，无法完成解析: {exc}"
+        ) from exc
     except ValueError as exc:
         # JSONDecodeError 是 ValueError 子类；此外超过 Python 数字文本长度
         # 限制（见 sys.get_int_max_str_digits，默认 4300 位）时，解析器抛
