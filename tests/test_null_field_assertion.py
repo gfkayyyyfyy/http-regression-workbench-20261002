@@ -4,9 +4,10 @@
 ``python -m api_workbench run case.json`` 验证：
 
 1. expected_value 写成 null 时允许加载（load_case 不抛错），省略该键仍属错误；
-   数组、对象及非有限数字（未加引号的 NaN/Infinity/-Infinity、1e400 等
-   溢出值）继续被拒绝：不发送请求，stdout 为空，stderr 以 api_workbench:
-   开头并指出 expected_value，退出码 2，无 Traceback；
+   对象、含对象/嵌套数组/非有限数字的数组及非有限数字
+   （未加引号的 NaN/Infinity/-Infinity、1e400 等溢出值）继续被拒绝：
+   不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
+   expected_value，退出码 2，无 Traceback；
 2. null 期望只在键存在且值为 null 时通过：响应 200 + {"value":null} 整体通过；
    键缺失（{}）时 actual 为 null 但字段检查失败；状态码 500 + {"value":null}
    时字段通过、整体失败；
@@ -351,8 +352,18 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
         self.assertIn("expected_value", str(context.exception))
 
     def test_load_case_rejects_other_invalid_types(self) -> None:
-        # 数组、对象及非有限数字（NaN/Infinity/-Infinity、1e400 溢出）继续被拒绝
-        for raw_value in ("[]", "{}", "NaN", "Infinity", "-Infinity", "1e400"):
+        # 对象，含对象、嵌套数组或非有限数字的数组，以及非有限数字
+        # （NaN/Infinity/-Infinity、1e400 溢出）继续被拒绝
+        for raw_value in (
+            "{}",
+            "[{}]",
+            "[[]]",
+            "[NaN]",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "1e400",
+        ):
             with self.subTest(raw_value=raw_value):
                 case_path = self._write_raw_case(raw_value)
                 with self.assertRaises(CaseError) as context:
@@ -375,7 +386,16 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
         self.assertEqual(self.server.get_count, 0, "缺键时不得发送 GET")
 
     def test_cli_rejects_other_invalid_types_without_sending_request(self) -> None:
-        for raw_value in ("[]", "{}", "NaN", "Infinity", "-Infinity", "1e400"):
+        for raw_value in (
+            "{}",
+            "[{}]",
+            "[[]]",
+            "[NaN]",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "1e400",
+        ):
             with self.subTest(raw_value=raw_value):
                 self.server.set_scenario(200, b'{"value":null}')
                 case_path = self._write_raw_case(raw_value)

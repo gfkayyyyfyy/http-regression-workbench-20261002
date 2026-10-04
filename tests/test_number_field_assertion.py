@@ -9,11 +9,11 @@
    （1 不匹配 true，0 不匹配 false）；
 2. 报告结构不变，field_check.expected/actual 保留各自的 JSON 类型；
    字段缺失时 actual 为 null 并判失败；数值或类型不符时 actual 原样保留；
-3. expected_value 缺失，或为数组、对象、未加引号的 NaN/Infinity/-Infinity，
-   以及 1e400 这类解析后非有限的数字时，load_case 抛出 CaseError：
-   不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
-   expected_value，退出码 2，无 Traceback；引号内的 "Infinity"
-   仍按既有字符串规则处理；
+3. expected_value 缺失，或为对象、含对象/嵌套数组/非有限数字的数组、
+   未加引号的 NaN/Infinity/-Infinity，以及 1e400 这类解析后非有限的
+   数字时，load_case 抛出 CaseError：不发送请求，stdout 为空，
+   stderr 以 api_workbench: 开头并指出 expected_value，退出码 2，
+   无 Traceback；引号内的 "Infinity" 仍按既有字符串规则处理；
 4. 数字期望不改变既有分类：非 JSON 对象或含非有限数字的响应仍为
    invalid_response（保留状态码检查结果），超时或连接失败仍为
    request_failed（两项 actual 为 null、所有 passed 为 false），退出码 1；
@@ -373,12 +373,15 @@ class NumberExpectedErrorClassificationTests(_NumberFlowTestCase):
 
 
 class NumberExpectedValueValidationTests(_NumberFlowTestCase):
-    """expected_value 的加载校验：有限数字合法，非有限数字与容器类型拒绝。"""
+    """expected_value 的加载校验：有限数字合法，非有限数字与对象等拒绝。"""
 
     # 原始 JSON 文本，全部应被 load_case 拒绝
     INVALID_RAW_VALUES = [
-        ("array", "[]"),
         ("object", "{}"),
+        ("array_with_object", "[{}]"),
+        ("nested_array", "[[]]"),
+        ("array_with_nan", "[NaN]"),
+        ("array_with_overflow", "[1e400]"),
         ("nan", "NaN"),
         ("infinity", "Infinity"),
         ("negative_infinity", "-Infinity"),

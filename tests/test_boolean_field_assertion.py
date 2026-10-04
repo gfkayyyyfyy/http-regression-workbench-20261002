@@ -8,8 +8,9 @@
    字符串期望仍只匹配完全相等的字符串；
 2. 报告的 field_check.expected/actual 保留各自的 JSON 类型，布尔不转成文字；
    字段缺失时 actual 为 null；其他类型的实际值原样保留并判失败；
-3. expected_value 缺失或为字符串、布尔值、有限数字与 null 之外的类型
-   （数组、对象，含未加引号的 NaN/Infinity/-Infinity）时 load_case 抛出
+3. expected_value 缺失或为字符串、布尔值、有限数字、null 与仅含这些标量的
+   一维数组之外的类型（对象，含对象、嵌套数组或非有限数字的数组，
+   以及未加引号的 NaN/Infinity/-Infinity）时 load_case 抛出
    CaseError：不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
    expected_value，退出码 2，无 Traceback（显式 null 期望的回归见
    test_null_field_assertion.py，数字期望见 test_number_field_assertion.py）；
@@ -357,13 +358,16 @@ class BooleanExpectedErrorClassificationTests(_BooleanFlowTestCase):
 
 
 class ExpectedValueTypeValidationTests(unittest.TestCase):
-    """expected_value 接受字符串、布尔值、有限数字与 null：其他类型（含非标准常量）一律拒绝。"""
+    """expected_value 接受标量与标量一维数组：对象、非法数组与非标准常量一律拒绝。"""
 
     # 原始 JSON 文本 → 期望出现在诊断中的字样
     INVALID_RAW_VALUES = [
         ("missing", None),  # None 占位表示不写入该字段
-        ("array", "[]"),
         ("object", "{}"),
+        ("array_with_object", "[{}]"),
+        ("nested_array", "[[]]"),
+        ("array_with_nan", "[NaN]"),
+        ("array_with_infinity", "[Infinity]"),
         ("nan", "NaN"),
         ("infinity", "Infinity"),
         ("negative_infinity", "-Infinity"),

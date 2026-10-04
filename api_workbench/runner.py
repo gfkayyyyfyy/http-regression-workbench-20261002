@@ -104,6 +104,29 @@ def _is_finite_number(value) -> bool:
     return isinstance(value, float) and math.isfinite(value)
 
 
+def _is_scalar_expected_value(value) -> bool:
+    """是否为合法的标量期望值：字符串、布尔、有限 JSON 数字或 null。
+
+    对象（dict）不是标量；bool 虽是 int 子类也在此显式按布尔接受。
+    """
+    return (
+        value is None
+        or isinstance(value, (str, bool))
+        or _is_finite_number(value)
+    )
+
+
+def _is_valid_expected_value(value) -> bool:
+    """expected_value 是否合法：标量，或仅含标量的一维数组。
+
+    空数组合法；数组元素可混合字符串、布尔、有限数字与 null，
+    但不能是对象或嵌套数组，也不能含 NaN/Infinity/1e400 等非有限数字。
+    """
+    if isinstance(value, list):
+        return all(_is_scalar_expected_value(item) for item in value)
+    return _is_scalar_expected_value(value)
+
+
 def load_case(path: str) -> dict:
     """读取并校验用例文件，失败时抛出 CaseError（不发送任何请求）。"""
     try:
@@ -142,22 +165,25 @@ def load_case(path: str) -> dict:
     # 大整数，如 1 后接 400 个 0），小数/指数写法则必须解析为有限 float
     # （1e400、NaN、Infinity 拒绝）。键必须存在：省略该键与写 null 含义不同，
     # 省略仍属用例错误，因此不能用 get 的默认值区分，必须显式检查键是否存在。
+    #
+    # 此外接受只含上述标量（可混合、可为空）的一维数组：数组按长度、顺序
+    # 及各位置值比较，不支持嵌套数组或数组中的对象。
     if "expected_value" not in case:
         raise CaseError(
-            "'expected_value' 缺失：必须为字符串、布尔值、有限数字或 null"
+            "'expected_value' 缺失：必须为字符串、布尔值、有限数字、null"
+            "或仅含这些标量的数组"
         )
     expected_value = case["expected_value"]
-    # bool 是 int 的子类，需先识别布尔；数组、对象等一律拒绝；
+    # bool 是 int 的子类，校验中已显式按布尔处理；
+    # 对象一律拒绝；数组仅当每个元素都是合法标量时接受（空数组合法），
+    # 含对象、嵌套数组或非有限数字（NaN、Infinity、1e400）的数组拒绝；
     # None（JSON null）显式允许。
-    if (
-        expected_value is not None
-        and not isinstance(expected_value, (str, bool))
-        and not _is_finite_number(expected_value)
-    ):
+    if not _is_valid_expected_value(expected_value):
         raise CaseError(
             "'expected_value' 必须为字符串、布尔值（true/false）、"
-            "JSON 数字或 null（整数按任意精度接受；不接受数组、对象、"
-            "NaN、Infinity 或 1e400 这类溢出的小数/指数数值）"
+            "JSON 数字、null，或仅含这些标量的数组（空数组合法；"
+            "整数按任意精度接受；不接受对象、嵌套数组、NaN、Infinity "
+            "或 1e400 这类溢出的小数/指数数值）"
         )
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
@@ -275,6 +301,9 @@ def _report(
 def _field_matches(expected, actual) -> bool:
     """按类型严格匹配字段期望值与实际值。
 
+    - 数组期望只匹配数组实际值：长度必须相同，并按位置逐个严格比较，
+      不排序、不去重；每个元素沿用标量的严格类型规则（见下）；
+      空数组只匹配空数组，不匹配 null 或缺失字段；
     - 布尔期望只匹配布尔实际值（true 不匹配 1 或 "true"）；
     - 数字期望只匹配数字实际值（布尔除外），按 JSON 解析结果精确比较，
       不设误差容限：1、1.0 与 1e0 互相匹配，0 与 -0.0 相等；
@@ -283,6 +312,13 @@ def _field_matches(expected, actual) -> bool:
     - 字符串期望只匹配完全相等的字符串；
     - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
     """
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(expected) != len(actual):
+            return False
+        return all(
+            _field_matches(expected_item, actual_item)
+            for expected_item, actual_item in zip(expected, actual)
+        )
     if isinstance(expected, bool):
         return isinstance(actual, bool) and actual == expected
     if isinstance(expected, (int, float)):
