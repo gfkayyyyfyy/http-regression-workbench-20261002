@@ -7,6 +7,8 @@ import math
 import socket
 import sys
 from http.client import HTTPConnection, HTTPException
+from json.decoder import JSONDecoder
+from json.scanner import py_make_scanner
 from urllib.parse import urlsplit
 
 REQUEST_TIMEOUT = 3.0
@@ -68,17 +70,30 @@ def _parse_response_body(body: bytes):
     json：直接向 json.loads 传 bytes 会让其按 BOM 自动识别 UTF-16/UTF-32
     正文，因此必须先解码为 str 以封死该旁路。ASCII 正文中以 JSON 转义
     书写的 \\ud800 / \\udc00 解码后是合法文本，照常解析为孤立代理项。
+
+    解析使用纯 Python 扫描器（py_make_scanner，即 json 在缺少 C 扩展时的
+    标准回退，语法严格性与 parse_constant/parse_float 回调和默认解码器
+    完全一致）：部分运行时的 C 扫描器递归预算与 sys.getrecursionlimit()
+    脱钩，能成功解析嵌套层数远超当前运行时递归上限的正文；纯 Python
+    扫描器的每层嵌套都消耗 Python 递归栈，使这类正文统一抛出
+    RecursionError，进而在此处归入无效响应，不向用户输出 Traceback。
+    既不调整运行时递归上限，也不引入固定深度配置。
     """
     text = _decode_body(body)
     if text is None:
         return None
+    decoder = JSONDecoder(
+        parse_constant=_reject_constant,
+        parse_float=_parse_float_finite,
+    )
+    decoder.scan_once = py_make_scanner(decoder)
     try:
-        return json.loads(
-            text,
-            parse_constant=_reject_constant,
-            parse_float=_parse_float_finite,
-        )
-    except ValueError:
+        return decoder.decode(text)
+    except (ValueError, RecursionError):
+        # ValueError 覆盖语法错误与被拒绝的常量/溢出数值；RecursionError
+        # 覆盖嵌套深度超过当前 Python 运行时递归上限的正文（如数千层
+        # 单元素数组）。后者同样是完整收到但无法解析的正文，统一判为
+        # 无效响应。
         return None
 
 
@@ -405,7 +420,9 @@ def execute(case: dict) -> tuple[dict, int]:
         # 不参考响应头 charset、不忽略或替换坏字节。parse_constant 使整份正文
         # 中未加引号的 NaN/Infinity/-Infinity 一律解析失败；parse_float 使
         # 1e400 等指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名
-        # 不受影响（ASCII 转义的 \ud800 等仍是合法文本）。
+        # 不受影响（ASCII 转义的 \ud800 等仍是合法文本）。嵌套深度超过当前
+        # 运行时递归上限的正文在解析时抛出 RecursionError，同样按无效处理，
+        # 即使目标字段位于正文开头且值已符合期望也不跳过整份解析。
         payload = _parse_response_body(body)
         if not isinstance(payload, dict):
             # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
