@@ -210,37 +210,21 @@ def load_case(path: str) -> dict:
     }
 
 
-def _request_failed_report(case: dict) -> dict:
-    return {
-        "name": case["name"],
-        "passed": False,
-        "error": REQUEST_FAILED,
-        "status_check": {
-            "expected": case["expected_status"],
-            "actual": None,
-            "passed": False,
-        },
-        "field_check": {
-            "field": case["field"],
-            "expected": case["expected_value"],
-            "actual": None,
-            "passed": False,
-            # 连接失败/超时/正文提前断开：响应无法用于字段检查，
-            # 既不能确认键存在也不能确认缺失，present 为 null
-            "present": None,
-        },
-    }
-
-
-def _report(
+def _build_report(
     case: dict,
-    status,
-    field_actual,
-    status_passed,
-    field_passed,
+    *,
     error,
+    status,
+    status_passed: bool,
+    field_actual,
+    field_passed: bool,
     field_present,
-):
+) -> dict:
+    """组装报告：报告结构只在此处定义一次，所有结果分支共用本入口。
+
+    检查无法进行时（请求失败/无效正文）对应 actual 与 present 传 None；
+    各项 passed 在此统一归一为 bool，总 passed 仍由两项检查共同决定。
+    """
     return {
         "name": case["name"],
         "passed": bool(status_passed and field_passed),
@@ -289,8 +273,13 @@ def _field_matches(expected, actual) -> bool:
     return isinstance(actual, str) and actual == expected
 
 
-def execute(case: dict) -> tuple[dict, int]:
-    """发送唯一一次 GET（不跟随重定向），返回 (报告, 退出码)。"""
+def _send_get(case: dict):
+    """发送唯一一次 GET（不跟随重定向）。
+
+    成功收满响应返回 ``(status, body)``；超时、连接失败或未收满声明长度
+    就断开等任何网络/协议错误一律返回 ``None``，由调用方统一判为
+    request_failed（即使已收到响应头，状态码也不保留）。
+    """
     parsed = case["_parsed"]
     port = parsed.port or 80
     path = parsed.path or "/"
@@ -308,11 +297,31 @@ def execute(case: dict) -> tuple[dict, int]:
             response = connection.getresponse()
             body = response.read()
             status = response.status
-        except (socket.timeout, TimeoutError, OSError, HTTPException) as exc:
-            return _request_failed_report(case), 1
+        except (socket.timeout, TimeoutError, OSError, HTTPException):
+            return None
     finally:
         connection.close()
+    return status, body
 
+
+def execute(case: dict) -> tuple[dict, int]:
+    """执行用例并返回 (报告, 退出码)；四种结果均由 _build_report 组装。"""
+    outcome = _send_get(case)
+
+    if outcome is None:
+        # 连接失败/超时/正文提前断开：两项 actual 与 present 均为 null，
+        # 所有 passed 为 false，即使已收到响应头也不保留其状态码。
+        return _build_report(
+            case,
+            error=REQUEST_FAILED,
+            status=None,
+            status_passed=False,
+            field_actual=None,
+            field_passed=False,
+            field_present=None,
+        ), 1
+
+    status, body = outcome
     status_passed = status == case["expected_status"]
 
     # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
@@ -321,17 +330,17 @@ def execute(case: dict) -> tuple[dict, int]:
     # 指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名不受影响。
     payload = _parse_response_body(body)
     if not isinstance(payload, dict):
-        report = _report(
+        # 正文无效或顶层不是对象：保留实际状态码及其检查结果，
+        # 字段 actual/present 为 null，字段检查失败。
+        return _build_report(
             case,
-            status=status,
-            field_actual=None,
-            status_passed=status_passed,
-            field_passed=False,
             error=INVALID_RESPONSE,
-            # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
+            status=status,
+            status_passed=status_passed,
+            field_actual=None,
+            field_passed=False,
             field_present=None,
-        )
-        return report, 1
+        ), 1
 
     field_name = case["field"]
     # present 只按完整键名判断顶层键是否存在（点号不表示嵌套路径）：
@@ -343,21 +352,20 @@ def execute(case: dict) -> tuple[dict, int]:
         field_actual = None
         field_passed = False
     else:
-        value = payload[field_name]
         # 实际值原样保留（保留 JSON 类型，布尔不转文字）；
         # 仅当实际值与期望值类型相同且相等时才通过（规则见 _field_matches）。
-        field_actual = value
-        field_passed = _field_matches(case["expected_value"], value)
+        field_actual = payload[field_name]
+        field_passed = _field_matches(case["expected_value"], field_actual)
 
     error = None if status_passed and field_passed else ASSERTION_FAILED
     exit_code = 0 if error is None else 1
-    report = _report(
+    report = _build_report(
         case,
-        status=status,
-        field_actual=field_actual,
-        status_passed=status_passed,
-        field_passed=field_passed,
         error=error,
+        status=status,
+        status_passed=status_passed,
+        field_actual=field_actual,
+        field_passed=field_passed,
         field_present=field_present,
     )
     return report, exit_code
