@@ -132,13 +132,17 @@ def _is_scalar_expected_value(value) -> bool:
 
 
 def _is_valid_expected_value(value) -> bool:
-    """expected_value 是否合法：标量，或仅含标量的一维数组。
+    """expected_value 是否合法：标量、仅含标量的一维数组，或仅含标量成员的对象。
 
-    空数组合法；数组元素可混合字符串、布尔、有限数字与 null，
-    但不能是对象或嵌套数组，也不能含 NaN/Infinity/1e400 等非有限数字。
+    空数组与空对象均合法；数组元素可混合字符串、布尔、有限数字与 null，
+    但不能是对象或嵌套数组；对象的每个成员值同样只能是这些标量，
+    不接受数组成员或嵌套对象，也不能含 NaN/Infinity/1e400 等非有限数字。
+    对象成员键不做限制（原样比较，点号不表示路径），键顺序无关。
     """
     if isinstance(value, list):
         return all(_is_scalar_expected_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(_is_scalar_expected_value(item) for item in value.values())
     return _is_scalar_expected_value(value)
 
 
@@ -201,22 +205,29 @@ def load_case(path: str) -> dict:
     #
     # 此外接受只含上述标量（可混合、可为空）的一维数组：数组按长度、顺序
     # 及各位置值比较，不支持嵌套数组或数组中的对象。
+    #
+    # 也接受只含上述标量成员（可混合、可为空）的对象：按完整键集合比较，
+    # 成员键按原文匹配（点号不表示路径）、键顺序无关；成员值不接受数组或
+    # 嵌套对象。
     if "expected_value" not in case:
         raise CaseError(
-            "'expected_value' 缺失：必须为字符串、布尔值、有限数字、null"
-            "或仅含这些标量的数组"
+            "'expected_value' 缺失：必须为字符串、布尔值、有限数字、null、"
+            "仅含这些标量的数组，或仅含这些标量成员的对象"
         )
     expected_value = case["expected_value"]
     # bool 是 int 的子类，校验中已显式按布尔处理；
-    # 对象一律拒绝；数组仅当每个元素都是合法标量时接受（空数组合法），
+    # 数组仅当每个元素都是合法标量时接受（空数组合法），
     # 含对象、嵌套数组或非有限数字（NaN、Infinity、1e400）的数组拒绝；
+    # 对象仅当每个成员值都是合法标量时接受（空对象合法），
+    # 含数组、嵌套对象或非有限数字成员的对象拒绝；
     # None（JSON null）显式允许。
     if not _is_valid_expected_value(expected_value):
         raise CaseError(
             "'expected_value' 必须为字符串、布尔值（true/false）、"
-            "JSON 数字、null，或仅含这些标量的数组（空数组合法；"
-            "整数按任意精度接受；不接受对象、嵌套数组、NaN、Infinity "
-            "或 1e400 这类溢出的小数/指数数值）"
+            "JSON 数字、null，仅含这些标量的数组（空数组合法），或仅含这些"
+            "标量成员的对象（空对象合法；成员值不接受数组或嵌套对象）；"
+            "整数按任意精度接受；不接受嵌套数组、嵌套对象、NaN、Infinity "
+            "或 1e400 这类溢出的小数/指数数值"
         )
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
@@ -356,6 +367,11 @@ def _report(
 def _field_matches(expected, actual) -> bool:
     """按类型严格匹配字段期望值与实际值。
 
+    - 对象期望只匹配对象实际值：键集合必须完全相同（多键、少键均失败），
+      成员键按原文逐个匹配（点号不表示路径），键顺序无关；每个成员值沿用
+      标量的严格类型规则（见下）；空对象只匹配空对象，不匹配 null 或缺失
+      字段；嵌套对象或数组不可能出现在期望值中（加载时已拒绝），实际值中
+      的数组/嵌套对象成员因类型不符而失败；
     - 数组期望只匹配数组实际值：长度必须相同，并按位置逐个严格比较，
       不排序、不去重；每个元素沿用标量的严格类型规则（见下）；
       空数组只匹配空数组，不匹配 null 或缺失字段；
@@ -367,6 +383,12 @@ def _field_matches(expected, actual) -> bool:
     - 字符串期望只匹配完全相等的字符串；
     - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
     """
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict) or set(expected) != set(actual):
+            return False
+        return all(
+            _field_matches(expected[key], actual[key]) for key in expected
+        )
     if isinstance(expected, list):
         if not isinstance(actual, list) or len(expected) != len(actual):
             return False

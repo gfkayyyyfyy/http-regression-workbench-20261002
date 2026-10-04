@@ -14,9 +14,10 @@
 3. 报告结构不变，field_check.expected/actual 保留数组与各元素的 JSON
    类型；字段缺失时 present 为 false、actual 为 null；字段存在但类型、
    长度或元素不符时 present 为 true、actual 原样保留；
-4. expected_value 缺失，或为对象、含对象/嵌套数组/非有限数字的数组时，
+4. expected_value 缺失，或为含对象/嵌套数组/非有限数字的数组时，
    load_case 抛出 CaseError：不发送请求，stdout 为空，stderr 以
    api_workbench: 开头并指出 expected_value，退出码 2，无 Traceback；
+   （仅含标量成员的对象由对象断言的专门测试覆盖）
 5. 数组期望不改变既有分类：非 JSON 对象的响应仍为 invalid_response
    （保留状态码检查结果），连接失败仍为 request_failed，退出码 1；
 6. 状态码不符时仍检查字段；每次有效执行仅发送一次 GET；
@@ -420,11 +421,10 @@ class ArrayExpectedErrorClassificationTests(_ArrayFlowTestCase):
 
 
 class ArrayExpectedValueLoadingTests(_ArrayFlowTestCase):
-    """expected_value 的加载校验：标量一维数组合法，对象与非法数组拒绝。"""
+    """expected_value 的加载校验：标量一维数组合法，非法数组与含数组成员/嵌套对象的对象拒绝。"""
 
     # 原始 JSON 文本，全部应被 load_case 拒绝
     INVALID_RAW_VALUES = [
-        ("object", "{}"),
         ("array_with_object", "[1,{}]"),
         ("array_with_nested_array", "[1,[2]]"),
         ("nested_empty_array", "[[]]"),
@@ -432,6 +432,12 @@ class ArrayExpectedValueLoadingTests(_ArrayFlowTestCase):
         ("array_with_infinity", "[Infinity]"),
         ("array_with_negative_infinity", "[-Infinity]"),
         ("array_with_overflow", "[1e400]"),
+        ("object_with_nan", '{"x":NaN}'),
+        ("object_with_infinity", '{"x":Infinity}'),
+        ("object_with_negative_infinity", '{"x":-Infinity}'),
+        ("object_with_overflow", '{"x":1e400}'),
+        ("object_with_array", '{"x":[1]}'),
+        ("object_with_nested_object", '{"x":{"y":1}}'),
         ("nan", "NaN"),
         ("overflow_scalar", "1e400"),
     ]

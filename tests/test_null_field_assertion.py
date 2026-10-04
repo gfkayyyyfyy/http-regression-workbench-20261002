@@ -4,10 +4,11 @@
 ``python -m api_workbench run case.json`` 验证：
 
 1. expected_value 写成 null 时允许加载（load_case 不抛错），省略该键仍属错误；
-   对象、含对象/嵌套数组/非有限数字的数组及非有限数字
-   （未加引号的 NaN/Infinity/-Infinity、1e400 等溢出值）继续被拒绝：
-   不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
-   expected_value，退出码 2，无 Traceback；
+   含嵌套对象/数组/非有限数字成员的对象、含对象/嵌套数组/非有限数字的数组
+   及非有限数字（未加引号的 NaN/Infinity/-Infinity、1e400 等溢出值）
+   继续被拒绝：不发送请求，stdout 为空，stderr 以 api_workbench: 开头并指出
+   expected_value，退出码 2，无 Traceback（仅含标量成员的扁平对象由
+   test_object_field_assertion.py 覆盖）；
 2. null 期望只在键存在且值为 null 时通过：响应 200 + {"value":null} 整体通过；
    键缺失（{}）时 actual 为 null 但字段检查失败；状态码 500 + {"value":null}
    时字段通过、整体失败；
@@ -352,13 +353,16 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
         self.assertIn("expected_value", str(context.exception))
 
     def test_load_case_rejects_other_invalid_types(self) -> None:
-        # 对象，含对象、嵌套数组或非有限数字的数组，以及非有限数字
-        # （NaN/Infinity/-Infinity、1e400 溢出）继续被拒绝
+        # 含嵌套对象、数组或非有限数字成员的对象，含对象、嵌套数组或非有限
+        # 数字的数组，以及非有限数字（NaN/Infinity/-Infinity、1e400 溢出）
+        # 继续被拒绝
         for raw_value in (
-            "{}",
+            '{"a":{"b":1}}',
+            '{"a":[1]}',
             "[{}]",
             "[[]]",
             "[NaN]",
+            '{"x":NaN}',
             "NaN",
             "Infinity",
             "-Infinity",
@@ -387,10 +391,12 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
 
     def test_cli_rejects_other_invalid_types_without_sending_request(self) -> None:
         for raw_value in (
-            "{}",
+            '{"a":{"b":1}}',
+            '{"a":[1]}',
             "[{}]",
             "[[]]",
             "[NaN]",
+            '{"x":NaN}',
             "NaN",
             "Infinity",
             "-Infinity",
