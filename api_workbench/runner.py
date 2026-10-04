@@ -210,28 +210,6 @@ def load_case(path: str) -> dict:
     }
 
 
-def _request_failed_report(case: dict) -> dict:
-    return {
-        "name": case["name"],
-        "passed": False,
-        "error": REQUEST_FAILED,
-        "status_check": {
-            "expected": case["expected_status"],
-            "actual": None,
-            "passed": False,
-        },
-        "field_check": {
-            "field": case["field"],
-            "expected": case["expected_value"],
-            "actual": None,
-            "passed": False,
-            # 连接失败/超时/正文提前断开：响应无法用于字段检查，
-            # 既不能确认键存在也不能确认缺失，present 为 null
-            "present": None,
-        },
-    }
-
-
 def _report(
     case: dict,
     status,
@@ -241,6 +219,8 @@ def _report(
     error,
     field_present,
 ):
+    """组装唯一一种报告结构；所有结果分支（成功、断言失败、
+    invalid_response、request_failed）都经由这里输出相同字段。"""
     return {
         "name": case["name"],
         "passed": bool(status_passed and field_passed),
@@ -290,7 +270,11 @@ def _field_matches(expected, actual) -> bool:
 
 
 def execute(case: dict) -> tuple[dict, int]:
-    """发送唯一一次 GET（不跟随重定向），返回 (报告, 退出码)。"""
+    """发送唯一一次 GET（不跟随重定向），返回 (报告, 退出码)。
+
+    各结果分支只负责算出状态码/字段的实际值与通过标记，
+    报告结构与退出码在函数末尾统一生成，避免重复定义字段。
+    """
     parsed = case["_parsed"]
     port = parsed.port or 80
     path = parsed.path or "/"
@@ -308,49 +292,52 @@ def execute(case: dict) -> tuple[dict, int]:
             response = connection.getresponse()
             body = response.read()
             status = response.status
-        except (socket.timeout, TimeoutError, OSError, HTTPException) as exc:
-            return _request_failed_report(case), 1
+        except (socket.timeout, TimeoutError, OSError, HTTPException):
+            # 连接失败/超时/正文提前断开：即使已收到响应头也不保留状态码
+            status = None
+            body = None
     finally:
         connection.close()
 
-    status_passed = status == case["expected_status"]
-
-    # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
-    # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
-    # 未加引号 NaN/Infinity/-Infinity 一律解析失败；parse_float 使 1e400 等
-    # 指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名不受影响。
-    payload = _parse_response_body(body)
-    if not isinstance(payload, dict):
-        report = _report(
-            case,
-            status=status,
-            field_actual=None,
-            status_passed=status_passed,
-            field_passed=False,
-            error=INVALID_RESPONSE,
-            # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
-            field_present=None,
-        )
-        return report, 1
-
-    field_name = case["field"]
-    # present 只按完整键名判断顶层键是否存在（点号不表示嵌套路径）：
-    # 值为 null、false、0、空字符串、数组或对象都算存在。
-    field_present = field_name in payload
-    if not field_present:
-        # 字段缺失：present 为 false、actual 为 null，即使期望也是 null
-        # 仍判失败——null 期望只在键存在且值为 null 时通过
+    if status is None:
+        # 请求失败：响应不可用，状态码与字段检查均无实际值，
+        # 既不能确认键存在也不能确认缺失，present 为 null
+        error = REQUEST_FAILED
+        status_passed = False
+        field_present = None
         field_actual = None
         field_passed = False
     else:
-        value = payload[field_name]
-        # 实际值原样保留（保留 JSON 类型，布尔不转文字）；
-        # 仅当实际值与期望值类型相同且相等时才通过（规则见 _field_matches）。
-        field_actual = value
-        field_passed = _field_matches(case["expected_value"], value)
+        status_passed = status == case["expected_status"]
 
-    error = None if status_passed and field_passed else ASSERTION_FAILED
-    exit_code = 0 if error is None else 1
+        # 响应必须是合法的严格 UTF-8 JSON 对象，否则字段检查失败、actual 为 null。
+        # parse_constant 使整份正文（含其他字段、嵌套对象与数组元素）中的
+        # 未加引号 NaN/Infinity/-Infinity 一律解析失败；parse_float 使 1e400 等
+        # 指数溢出为 ±inf 的数值同样解析失败；引号内字符串与字段名不受影响。
+        payload = _parse_response_body(body)
+        if not isinstance(payload, dict):
+            # 正文无效或顶层不是对象：无法判断键是否存在，present 为 null
+            error = INVALID_RESPONSE
+            field_present = None
+            field_actual = None
+            field_passed = False
+        else:
+            field_name = case["field"]
+            # present 只按完整键名判断顶层键是否存在（点号不表示嵌套路径）：
+            # 值为 null、false、0、空字符串、数组或对象都算存在。
+            field_present = field_name in payload
+            if field_present:
+                # 实际值原样保留（保留 JSON 类型，布尔不转文字）；
+                # 仅当实际值与期望值类型相同且相等时才通过（规则见 _field_matches）。
+                field_actual = payload[field_name]
+                field_passed = _field_matches(case["expected_value"], field_actual)
+            else:
+                # 字段缺失：present 为 false、actual 为 null，即使期望也是 null
+                # 仍判失败——null 期望只在键存在且值为 null 时通过
+                field_actual = None
+                field_passed = False
+            error = None if status_passed and field_passed else ASSERTION_FAILED
+
     report = _report(
         case,
         status=status,
@@ -360,7 +347,7 @@ def execute(case: dict) -> tuple[dict, int]:
         error=error,
         field_present=field_present,
     )
-    return report, exit_code
+    return report, 0 if error is None else 1
 
 
 def run_case(path: str) -> int:

@@ -1,0 +1,70 @@
+报告组装重构行为核对记录
+==========================
+
+重构范围
+--------
+
+仅 api_workbench/runner.py 的报告组装流程：
+
+- 删除与 _report 重复的 _request_failed_report；_report（第 213-242
+  行）成为唯一的报告组装函数，成功、断言失败、invalid_response、
+  request_failed 四种结果共用同一字段结构。
+- execute（第 272-350 行）改为各结果分支只计算取值（status、
+  status_passed、field_actual、field_passed、field_present、error），
+  报告组装与退出码统一在末尾（第 341-350 行）：
+  - 请求失败取值：第 302-309 行（status 为 None 时）；
+  - 状态码比较：第 311 行；
+  - 无效正文/非对象正文取值：第 317-323 行；
+  - 字段存在性（present）与字段匹配：第 325-338 行
+    （_field_matches 规则在第 245-269 行，未改动）；
+  - 退出码：error 为 None 时 0，否则 1（第 350 行）。
+
+用例格式、命令行入口（cli.py）、报告字段与类型、退出码语义均未改动；
+不新增断言或报告字段。load_case、run_case、server.py 未改动。
+
+回归验证
+--------
+
+- python3 -m unittest discover -s tests：169 个测试全部通过
+  （重构前基线同为 169 通过）。
+
+受控本地响应对照（127.0.0.1 临时端口服务，用例沿用 cases/health.json
+的 name/expected_status/field，仅改 url 与 expected_value）
+--------------------------------------------------------------
+
+1. 成功：服务返回 200 {"status":"ok"}，期望 "ok" → 退出码 0，
+   stderr 为空，stdout 为单个 JSON 报告：
+
+     {"name": "health", "passed": true, "error": null,
+      "status_check": {"expected": 200, "actual": 200, "passed": true},
+      "field_check": {"field": "status", "expected": "ok",
+                      "actual": "ok", "passed": true, "present": true}}
+
+2. 断言失败：同一响应，期望 "wrong" → 退出码 1：
+
+     {"name": "health", "passed": false, "error": "assertion_failed",
+      "status_check": {"expected": 200, "actual": 200, "passed": true},
+      "field_check": {"field": "status", "expected": "wrong",
+                      "actual": "ok", "passed": false, "present": true}}
+
+3. 无效正文：服务返回 200 与非法 JSON 正文 {"status": ok} → 退出码 1，
+   状态码及其检查结果保留，字段 actual 与 present 为 null：
+
+     {"name": "health", "passed": false, "error": "invalid_response",
+      "status_check": {"expected": 200, "actual": 200, "passed": true},
+      "field_check": {"field": "status", "expected": "ok",
+                      "actual": null, "passed": false, "present": null}}
+
+4. 请求失败：url 指向未监听端口（连接被拒绝）→ 退出码 1，两项
+   actual 与 present 均为 null，全部 passed 为 false：
+
+     {"name": "health", "passed": false, "error": "request_failed",
+      "status_check": {"expected": 200, "actual": null, "passed": false},
+      "field_check": {"field": "status", "expected": "ok",
+                      "actual": null, "passed": false, "present": null}}
+
+5. 用例校验失败（缺 url）：退出码 2，stdout 为空，stderr 为
+   "api_workbench: 'url' 必须为非空字符串"，无 Traceback。
+
+（以上报告为便于阅读做了压缩排版；实际输出为 indent=2 的单个 UTF-8
+JSON 对象，键的顺序与缩进不作为兼容性差异。）

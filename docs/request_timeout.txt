@@ -12,16 +12,17 @@
 
 - api_workbench/runner.py
   - REQUEST_TIMEOUT = 3.0（第 12 行）：默认超时常量。
-  - load_case(path)（第 77-201 行）：用例加载与校验；timeout_seconds
+  - load_case(path)（第 77-210 行）：用例加载与校验；timeout_seconds
     的解析与校验在第 138-157 行，解析结果放入返回字典的
-    "timeout_seconds" 键（第 199 行）。
-  - execute(case)（第 283-354 行）：发送唯一一次 GET；超时在第
-    291-295 行通过 HTTPConnection(timeout=...) 生效，超时/连接异常
-    的捕获在第 302-303 行。
-  - _request_failed_report(case)（第 204-223 行）：请求失败报告的
-    固定形状。
-  - run_case(path)（第 357-374 行）：CaseError 的处理（打印到
-    stderr、返回退出码 2）在第 358-362 行；报告输出在第 364-374 行。
+    "timeout_seconds" 键（第 208 行）。
+  - execute(case)（第 272-350 行）：发送唯一一次 GET；超时在第
+    284-288 行通过 HTTPConnection(timeout=...) 生效，超时/连接异常
+    的捕获在第 295-298 行，请求失败的结果取值在第 302-309 行计算。
+  - _report(...)（第 213-242 行）：唯一的报告组装函数，成功、断言
+    失败、invalid_response、request_failed 四种结果共用同一字段
+    结构；execute 末尾（第 341-350 行）统一调用并计算退出码。
+  - run_case(path)（第 353-370 行）：CaseError 的处理（打印到
+    stderr、返回退出码 2）在第 356-358 行；报告输出在第 360-369 行。
 - api_workbench/cli.py：main() 中 run 子命令调用 run_case
   （第 27-28 行），无其他超时相关逻辑。
 
@@ -53,36 +54,38 @@
    - load_case 抛出 CaseError（runner.py 第 148-151、154-156 行，
      错误消息均含 "timeout_seconds"）；
    - run_case 捕获后向 stderr 打印 "api_workbench: <原因>" 并返回
-     退出码 2（runner.py 第 358-362 行）；
+     退出码 2（runner.py 第 356-358 行）；
    - stdout 为空，stderr 以 "api_workbench:" 开头并提及
      timeout_seconds，不出现 Traceback；
    - 校验发生在 urlsplit 与任何网络操作之前（load_case 在第 159 行
      之后才开始解析 URL），因此不发送任何请求。
 
-二、超时的作用范围（execute，runner.py 第 283-303 行）
+二、超时的作用范围（execute，runner.py 第 272-300 行）
 ------------------------------------------------------
 
 1. timeout_seconds 限制的是每次网络阻塞等待的上限，不是整次执行的
    累计截止时间。execute 把它传给
    HTTPConnection(host, port, timeout=case.get("timeout_seconds",
-   REQUEST_TIMEOUT))（第 291-295 行），即底层套接字的超时；连接
+   REQUEST_TIMEOUT))（第 284-288 行），即底层套接字的超时；连接
    建立、等待响应头、读取正文的每次阻塞调用各自受它约束，多次等待
    之间不累加、没有总预算。
 
 2. 等待响应头与等待响应正文都受它影响：connection.getresponse()
-   （第 299 行，等待响应头）与 response.read()（第 300 行，按
+   （第 292 行，等待响应头）与 response.read()（第 293 行，按
    Content-Length 读取正文）使用同一个连接超时。
 
 3. 正文读取未完成时，不会先用已经收到的状态码生成成功检查。
-   status 变量在第 301 行才赋值，位于 response.read() 之后；只要
-   第 298-301 行中任何一步抛出 socket.timeout / TimeoutError /
-   OSError / HTTPException，都进入第 302-303 行的 except 分支，
-   直接返回 _request_failed_report(case) 与退出码 1——即使响应头
-   （含状态码 200）已经收到，也整体按请求失败处理，不进入后面的
-   状态码比较与字段检查（第 307 行起），也不会归为
-   invalid_response。
+   status 变量在第 294 行才赋值，位于 response.read() 之后；只要
+   第 291-294 行中任何一步抛出 socket.timeout / TimeoutError /
+   OSError / HTTPException，都进入第 295-298 行的 except 分支，
+   把 status 置为 None，随后在第 302-309 行按请求失败计算各项
+   取值——即使响应头（含状态码 200）已经收到，也整体按请求失败
+   处理，不进入后面的状态码比较与字段检查（第 311 行起），也不会
+   归为 invalid_response。报告由 execute 末尾统一的 _report 调用
+   （第 341-350 行）生成，退出码为 1。
 
-4. 请求失败报告的固定形状（_request_failed_report，第 204-223 行）：
+4. 请求失败报告的固定形状（取值在 execute 第 302-309 行计算，
+   结构由 _report 第 213-242 行定义）：
    - error 为 "request_failed"；
    - status_check.actual 与 field_check.actual 均为 null；
    - field_check.present 为 null（响应无法用于字段检查，既不能
@@ -90,11 +93,11 @@
    - 顶层及两项检查的 passed 均为 false；
    - name、status_check.expected、field_check.field、
      field_check.expected 从用例原样保留。
-   该报告经 run_case（第 364-374 行）以 JSON 写入 stdout，stderr
+   该报告经 run_case（第 360-369 行）以 JSON 写入 stdout，stderr
    为空。
 
 5. 每个用例只发送一次 GET（execute 中仅一次 connection.request，
-   第 298 行），超时后不重试。
+   第 291 行），超时后不重试。
 
 三、两个受控 127.0.0.1 示例（timeout_seconds 为 0.5）
 ------------------------------------------------------
