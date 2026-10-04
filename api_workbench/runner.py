@@ -190,6 +190,14 @@ def load_case(path: str) -> dict:
             f"'url' 路径或查询包含未转义的非 ASCII 字符，收到 {url!r}"
         )
 
+    # 原始空格（U+0020）同样不得出现在路径或查询中：请求行以空格分隔
+    # 方法、目标与协议版本，未编码空格会破坏请求行文本。已百分号编码的
+    # %20 与查询中的加号保持原样（不解码、不重复编码），片段不参与校验。
+    if " " in request_target:
+        raise CaseError(
+            f"'url' 路径或查询包含未编码的空格（U+0020），收到 {url!r}"
+        )
+
     return {
         "name": name,
         "url": url,
