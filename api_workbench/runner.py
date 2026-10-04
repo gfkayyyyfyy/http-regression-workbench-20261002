@@ -212,6 +212,24 @@ def load_case(path: str) -> dict:
             )
         timeout_seconds = float(raw_timeout)
 
+    # 制表符（U+0009）、换行符（U+000A）与回车符（U+000D）在地址解析时会被
+    # urlsplit 静默消去，使实际请求地址偏离用例原文。因此必须在解析前检查
+    # JSON 还原后的原始 url：第一个 # 之前的任何位置（协议、主机、端口、
+    # 路径、查询）出现这三种字符都作为用例错误拒绝——不删除字符、不自动
+    # 编码后继续请求。仅出现在片段（第一个 # 之后）时不影响：片段本就不
+    # 发送。已百分号编码的 %09/%0A/%0D（含小写）是普通文本，按原文发送，
+    # 不在此列。诊断单行输出：三种字符以 \t、\n、\r 字面形式表示，完整
+    # 原始地址同样转义后给出，消息中不出现实际的控制字符。
+    head = url.split("#", 1)[0]
+    found = [char for char in "\t\n\r" if char in head]
+    if found:
+        escapes = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
+        shown = "、".join(escapes[char] for char in found)
+        safe_url = "".join(escapes.get(char, char) for char in url)
+        raise CaseError(
+            f"'url' 包含未编码的控制字符（{shown}），收到 {safe_url}"
+        )
+
     try:
         # 括号不成对等结构无效地址会让 urlsplit 本身（或其 hostname 属性）
         # 抛出 ValueError，必须在连接前作为用例错误拒绝，不得修补后继续请求
