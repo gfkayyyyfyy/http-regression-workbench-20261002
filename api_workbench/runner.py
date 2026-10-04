@@ -68,6 +68,12 @@ def _parse_response_body(body: bytes):
     json：直接向 json.loads 传 bytes 会让其按 BOM 自动识别 UTF-16/UTF-32
     正文，因此必须先解码为 str 以封死该旁路。ASCII 正文中以 JSON 转义
     书写的 \\ud800 / \\udc00 解码后是合法文本，照常解析为孤立代理项。
+
+    嵌套过深的正文（如把标量包在数千层单元素数组内）会超出当前 Python
+    运行时的解析递归上限，json 抛出 RecursionError——它是 RuntimeError
+    而非 ValueError 的子类，必须单独捕获：正文已完整收到，只是无法
+    在当前递归设置下解析，同样归入 invalid_response，绝不让 Traceback
+    逃逸给用户。不为此新增固定深度配置，也不改动运行时递归上限。
     """
     text = _decode_body(body)
     if text is None:
@@ -78,7 +84,7 @@ def _parse_response_body(body: bytes):
             parse_constant=_reject_constant,
             parse_float=_parse_float_finite,
         )
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 
