@@ -373,17 +373,22 @@ class NumberExpectedErrorClassificationTests(_NumberFlowTestCase):
 
 
 class NumberExpectedValueValidationTests(_NumberFlowTestCase):
-    """expected_value 的加载校验：有限数字合法，非有限数字与容器类型拒绝。"""
+    """expected_value 的加载校验：有限数字合法，非有限数字、对象与非法数组拒绝。"""
 
     # 原始 JSON 文本，全部应被 load_case 拒绝
     INVALID_RAW_VALUES = [
-        ("array", "[]"),
         ("object", "{}"),
         ("nan", "NaN"),
         ("infinity", "Infinity"),
         ("negative_infinity", "-Infinity"),
         ("overflow", "1e400"),
         ("negative_overflow", "-1E+400"),
+        # 数组元素只能是字符串、布尔值、有限数字或 null：
+        # 对象、嵌套数组与非有限数字一律拒绝
+        ("array_with_object", "[{}]"),
+        ("nested_array", "[[1]]"),
+        ("array_with_nan", "[NaN]"),
+        ("array_with_overflow", "[1e400]"),
     ]
 
     def test_load_case_accepts_finite_numbers(self) -> None:

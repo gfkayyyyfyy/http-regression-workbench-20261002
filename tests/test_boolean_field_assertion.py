@@ -357,16 +357,22 @@ class BooleanExpectedErrorClassificationTests(_BooleanFlowTestCase):
 
 
 class ExpectedValueTypeValidationTests(unittest.TestCase):
-    """expected_value 接受字符串、布尔值、有限数字与 null：其他类型（含非标准常量）一律拒绝。"""
+    """expected_value 接受字符串、布尔值、有限数字、null 及标量数组：其他类型（含非标准常量与非法数组）一律拒绝。"""
 
     # 原始 JSON 文本 → 期望出现在诊断中的字样
     INVALID_RAW_VALUES = [
         ("missing", None),  # None 占位表示不写入该字段
-        ("array", "[]"),
         ("object", "{}"),
         ("nan", "NaN"),
         ("infinity", "Infinity"),
         ("negative_infinity", "-Infinity"),
+        # 数组元素只能是字符串、布尔值、有限数字或 null：
+        # 对象、嵌套数组与非有限数字一律拒绝
+        ("array_with_object", "[{}]"),
+        ("nested_array", "[[]]"),
+        ("array_with_nan", "[NaN]"),
+        ("array_with_infinity", "[1, Infinity]"),
+        ("array_with_overflow", "[1e400]"),
     ]
 
     def setUp(self) -> None:

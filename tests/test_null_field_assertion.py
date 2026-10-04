@@ -351,8 +351,19 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
         self.assertIn("expected_value", str(context.exception))
 
     def test_load_case_rejects_other_invalid_types(self) -> None:
-        # 数组、对象及非有限数字（NaN/Infinity/-Infinity、1e400 溢出）继续被拒绝
-        for raw_value in ("[]", "{}", "NaN", "Infinity", "-Infinity", "1e400"):
+        # 对象、非有限数字（NaN/Infinity/-Infinity、1e400 溢出）及非法数组
+        # （含对象、嵌套数组或非有限数字元素）继续被拒绝
+        for raw_value in (
+            "{}",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "1e400",
+            "[{}]",
+            "[[]]",
+            "[NaN]",
+            "[1e400]",
+        ):
             with self.subTest(raw_value=raw_value):
                 case_path = self._write_raw_case(raw_value)
                 with self.assertRaises(CaseError) as context:
@@ -375,7 +386,17 @@ class NullExpectedValueLoadingTests(_NullFlowTestCase):
         self.assertEqual(self.server.get_count, 0, "缺键时不得发送 GET")
 
     def test_cli_rejects_other_invalid_types_without_sending_request(self) -> None:
-        for raw_value in ("[]", "{}", "NaN", "Infinity", "-Infinity", "1e400"):
+        for raw_value in (
+            "{}",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "1e400",
+            "[{}]",
+            "[[]]",
+            "[NaN]",
+            "[1e400]",
+        ):
             with self.subTest(raw_value=raw_value):
                 self.server.set_scenario(200, b'{"value":null}')
                 case_path = self._write_raw_case(raw_value)

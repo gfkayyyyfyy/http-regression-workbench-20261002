@@ -137,27 +137,43 @@ def load_case(path: str) -> dict:
         raise CaseError("'url' 必须为非空字符串")
     if not isinstance(field, str) or not field:
         raise CaseError("'field' 必须为非空字符串")
-    # expected_value 接受字符串、布尔值（true/false）、JSON 数字
-    # 或显式 null（None）。数字中整数按任意精度接受（含超出浮点范围的
-    # 大整数，如 1 后接 400 个 0），小数/指数写法则必须解析为有限 float
-    # （1e400、NaN、Infinity 拒绝）。键必须存在：省略该键与写 null 含义不同，
-    # 省略仍属用例错误，因此不能用 get 的默认值区分，必须显式检查键是否存在。
+    # expected_value 接受字符串、布尔值（true/false）、JSON 数字、
+    # 显式 null（None），或以上标量组成的数组（可为空数组，元素可混合）。
+    # 数字中整数按任意精度接受（含超出浮点范围的大整数，如 1 后接 400 个 0），
+    # 小数/指数写法则必须解析为有限 float（1e400、NaN、Infinity 拒绝）。
+    # 键必须存在：省略该键与写 null 含义不同，省略仍属用例错误，
+    # 因此不能用 get 的默认值区分，必须显式检查键是否存在。
     if "expected_value" not in case:
         raise CaseError(
-            "'expected_value' 缺失：必须为字符串、布尔值、有限数字或 null"
+            "'expected_value' 缺失：必须为字符串、布尔值、有限数字、null "
+            "或由这些标量组成的数组"
         )
     expected_value = case["expected_value"]
-    # bool 是 int 的子类，需先识别布尔；数组、对象等一律拒绝；
-    # None（JSON null）显式允许。
-    if (
+    # bool 是 int 的子类，需先识别布尔；对象一律拒绝；None（JSON null）
+    # 显式允许。数组单独校验：元素只能是字符串、布尔值、有限数字或 null，
+    # 不接受对象、嵌套数组或非有限数字。
+    if isinstance(expected_value, list):
+        for element in expected_value:
+            if (
+                element is not None
+                and not isinstance(element, (str, bool))
+                and not _is_finite_number(element)
+            ):
+                raise CaseError(
+                    "'expected_value' 数组元素必须为字符串、布尔值"
+                    "（true/false）、JSON 数字或 null（不接受对象、"
+                    "嵌套数组、NaN、Infinity 或 1e400 这类溢出的"
+                    "小数/指数数值）"
+                )
+    elif (
         expected_value is not None
         and not isinstance(expected_value, (str, bool))
         and not _is_finite_number(expected_value)
     ):
         raise CaseError(
             "'expected_value' 必须为字符串、布尔值（true/false）、"
-            "JSON 数字或 null（整数按任意精度接受；不接受数组、对象、"
-            "NaN、Infinity 或 1e400 这类溢出的小数/指数数值）"
+            "JSON 数字、null 或由这些标量组成的数组（整数按任意精度接受；"
+            "不接受对象、NaN、Infinity 或 1e400 这类溢出的小数/指数数值）"
         )
     # bool 是 int 的子类，需显式排除
     if isinstance(expected_status, bool) or not isinstance(expected_status, int):
@@ -281,8 +297,21 @@ def _field_matches(expected, actual) -> bool:
       1 不匹配 true，0 不匹配 false；超出浮点范围的大整数（如 10**400）
       仍按任意精度整数精确比较，只匹配逐位相等的整数实际值；
     - 字符串期望只匹配完全相等的字符串；
-    - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）。
+    - null 期望只匹配 JSON null（不匹配 "null"、""、false、0、[]、{}）；
+    - 数组期望只匹配数组实际值（不匹配对象或其他标量）：按长度、顺序
+      及各位置的值逐项比较，不排序、不去重；空数组只匹配空数组。
+      元素沿用上述严格类型规则（true 不等于 1，"1" 不等于 1，
+      数字 1 与 1.0 相等，null 只匹配 null；大整数仍按任意精度比较）。
     """
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(
+                _field_matches(expected_item, actual_item)
+                for expected_item, actual_item in zip(expected, actual)
+            )
+        )
     if isinstance(expected, bool):
         return isinstance(actual, bool) and actual == expected
     if isinstance(expected, (int, float)):
